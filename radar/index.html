@@ -1,0 +1,1631 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Keolel Radar">
+    <meta name="theme-color" content="#07080b">
+    <title>Keolel Radar</title>
+
+    <link rel="stylesheet" href="/assets/css/style.css">
+    <link
+            rel="stylesheet"
+            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+            integrity="sha256-p4NxAoJBhIINfQ3j7w8pQW1yV8q2Q9r5h1V3x8r7W0="
+            crossorigin=""
+    >
+
+    <style>
+        .radar-page {
+            min-height: 100vh;
+            background: #07080b;
+        }
+
+        .radar-hud {
+            width: min(1500px, calc(100% - 32px));
+            margin: 32px auto;
+        }
+
+        .radar-header {
+            position: relative;
+            z-index: 20;
+        }
+
+        .radar-system-info {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+            color: #6e7785;
+        }
+
+        .radar-system-info .active {
+            color: #36c8d8;
+        }
+
+        .radar-status-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #36c8d8;
+            box-shadow: 0 0 12px #36c8d8;
+        }
+
+        .radar-layout {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 310px;
+            gap: 18px;
+            margin-top: 28px;
+        }
+
+        .radar-map-panel {
+            position: relative;
+            min-height: 680px;
+            border: 1px solid rgba(54, 200, 216, .25);
+            background: #090b0f;
+            overflow: hidden;
+        }
+
+        .radar-map-panel::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            z-index: 5;
+            pointer-events: none;
+            border: 1px solid rgba(255,255,255,.04);
+        }
+
+        #map {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            min-height: 680px;
+            background: #0b0d11;
+        }
+
+        .leaflet-container {
+            font-family: monospace;
+            background: #0b0d11;
+        }
+
+        .leaflet-control-zoom a {
+            background: #080a0e !important;
+            color: #36c8d8 !important;
+            border-color: rgba(54,200,216,.3) !important;
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(7,8,11,.8) !important;
+            color: #77818e !important;
+        }
+
+        .leaflet-control-attribution a {
+            color: #36c8d8 !important;
+        }
+
+        .map-overlay {
+            position: absolute;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .map-top-left {
+            top: 18px;
+            left: 18px;
+        }
+
+        .map-top-right {
+            top: 18px;
+            right: 18px;
+        }
+
+        .map-bottom-left {
+            bottom: 18px;
+            left: 18px;
+        }
+
+        .map-bottom-right {
+            bottom: 18px;
+            right: 18px;
+        }
+
+        .map-label {
+            padding: 8px 12px;
+            border: 1px solid rgba(54,200,216,.3);
+            background: rgba(7,8,11,.9);
+            color: #36c8d8;
+            font-family: monospace;
+            font-size: 10px;
+            letter-spacing: 2px;
+            backdrop-filter: blur(8px);
+        }
+
+        .map-search {
+            position: absolute;
+            top: 18px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1001;
+            width: min(520px, calc(100% - 180px));
+            display: flex;
+            gap: 6px;
+        }
+
+        #destinationSearch {
+            width: 100%;
+            height: 44px;
+            padding: 0 15px;
+            border: 1px solid rgba(54,200,216,.4);
+            outline: none;
+            background: rgba(7,8,11,.94);
+            color: #e8faff;
+            font-family: monospace;
+            letter-spacing: 1px;
+            box-shadow: 0 0 20px rgba(0,0,0,.3);
+        }
+
+        #destinationSearch::placeholder {
+            color: #67717e;
+        }
+
+        #destinationSearch:focus {
+            border-color: #36c8d8;
+            box-shadow: 0 0 20px rgba(54,200,216,.12);
+        }
+
+        #destinationSearchButton,
+        #fullscreenButton,
+        #locateButton {
+            border: 1px solid rgba(54,200,216,.4);
+            background: rgba(7,8,11,.95);
+            color: #36c8d8;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: .2s ease;
+        }
+
+        #destinationSearchButton {
+            min-width: 48px;
+        }
+
+        #destinationSearchButton:hover,
+        #fullscreenButton:hover,
+        #locateButton:hover {
+            background: #36c8d8;
+            color: #07080b;
+            box-shadow: 0 0 18px rgba(54,200,216,.35);
+        }
+
+        #fullscreenButton {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            z-index: 1002;
+            width: 44px;
+            height: 44px;
+        }
+
+        #locateButton {
+            position: absolute;
+            bottom: 18px;
+            right: 18px;
+            z-index: 1001;
+            min-height: 42px;
+            padding: 0 15px;
+        }
+
+        .radar-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .radar-panel {
+            position: relative;
+            border: 1px solid rgba(54,200,216,.2);
+            background: rgba(10,12,16,.94);
+            padding: 18px;
+        }
+
+        .radar-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 16px;
+            color: #36c8d8;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+        }
+
+        .radar-panel-title span {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #36c8d8;
+            box-shadow: 0 0 9px #36c8d8;
+        }
+
+        .radar-metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 11px 0;
+            border-bottom: 1px solid rgba(255,255,255,.05);
+            font-family: monospace;
+        }
+
+        .radar-metric:last-child {
+            border-bottom: 0;
+        }
+
+        .radar-metric span {
+            color: #687381;
+            font-size: 10px;
+            letter-spacing: 1px;
+        }
+
+        .radar-metric strong {
+            color: #dce7ed;
+            font-size: 13px;
+        }
+
+        #mapSpeed {
+            position: absolute;
+            left: 18px;
+            bottom: 18px;
+            z-index: 1001;
+            min-width: 90px;
+            padding: 12px 16px;
+            border: 1px solid rgba(54,200,216,.35);
+            background: rgba(7,8,11,.92);
+            color: #36c8d8;
+            font-family: monospace;
+            font-size: 16px;
+            letter-spacing: 2px;
+            text-align: center;
+            pointer-events: none;
+        }
+
+        #mapStatus {
+            position: absolute;
+            left: 18px;
+            top: 18px;
+            z-index: 1001;
+            max-width: 280px;
+            padding: 8px 12px;
+            border-left: 2px solid #36c8d8;
+            background: rgba(7,8,11,.9);
+            color: #aeb8c2;
+            font-family: monospace;
+            font-size: 9px;
+            letter-spacing: 1px;
+            pointer-events: none;
+        }
+
+        #radarWarning {
+            position: absolute;
+            left: 50%;
+            bottom: 28px;
+            transform: translateX(-50%) translateY(20px);
+            z-index: 1100;
+            min-width: 280px;
+            padding: 18px 24px;
+            border: 1px solid #ff3131;
+            background: rgba(45,0,0,.95);
+            color: #fff;
+            text-align: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: .25s ease;
+            box-shadow: 0 0 35px rgba(255,0,0,.25);
+        }
+
+        #radarWarning.active {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        #radarWarningDistance {
+            display: block;
+            color: #ff3b3b;
+            font-family: monospace;
+            font-size: 30px;
+            font-weight: 700;
+            letter-spacing: 3px;
+        }
+
+        #radarWarningLimit {
+            display: block;
+            margin-top: 5px;
+            color: #fff;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+        }
+
+        .radar-toggle-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+        }
+
+        .radar-toggle-text {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .radar-toggle-text strong {
+            color: #dce7ed;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 1px;
+        }
+
+        .radar-toggle-text span {
+            color: #687381;
+            font-family: monospace;
+            font-size: 9px;
+            line-height: 1.5;
+        }
+
+        .radar-toggle {
+            position: relative;
+            width: 54px;
+            height: 28px;
+            flex: 0 0 auto;
+        }
+
+        .radar-toggle input {
+            position: absolute;
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .radar-toggle-slider {
+            position: absolute;
+            inset: 0;
+            cursor: pointer;
+            border: 1px solid #303844;
+            background: #0b0d11;
+            transition: .2s ease;
+        }
+
+        .radar-toggle-slider::before {
+            content: "";
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            left: 4px;
+            top: 4px;
+            background: #5c6672;
+            transition: .2s ease;
+        }
+
+        .radar-toggle input:checked + .radar-toggle-slider {
+            border-color: #36c8d8;
+            background: rgba(54,200,216,.12);
+            box-shadow: 0 0 14px rgba(54,200,216,.18);
+        }
+
+        .radar-toggle input:checked + .radar-toggle-slider::before {
+            transform: translateX(26px);
+            background: #36c8d8;
+            box-shadow: 0 0 10px #36c8d8;
+        }
+
+        .test-controller {
+            display: none;
+            grid-template-columns: repeat(3, 48px);
+            grid-template-rows: repeat(3, 48px);
+            gap: 5px;
+            justify-content: center;
+            margin-top: 16px;
+        }
+
+        .test-controller.active {
+            display: grid;
+        }
+
+        .test-controller button {
+            border: 1px solid rgba(54,200,216,.35);
+            background: #0a0d11;
+            color: #36c8d8;
+            font-size: 17px;
+            cursor: pointer;
+            touch-action: manipulation;
+        }
+
+        .test-controller button:hover,
+        .test-controller button:active {
+            background: #36c8d8;
+            color: #07080b;
+        }
+
+        .test-controller .up {
+            grid-column: 2;
+            grid-row: 1;
+        }
+
+        .test-controller .left {
+            grid-column: 1;
+            grid-row: 2;
+        }
+
+        .test-controller .center {
+            grid-column: 2;
+            grid-row: 2;
+            cursor: default;
+            color: #697480;
+        }
+
+        .test-controller .right {
+            grid-column: 3;
+            grid-row: 2;
+        }
+
+        .test-controller .down {
+            grid-column: 2;
+            grid-row: 3;
+        }
+
+        .test-controller-info {
+            display: none;
+            margin-top: 12px;
+            color: #697480;
+            font-family: monospace;
+            font-size: 9px;
+            line-height: 1.5;
+            text-align: center;
+        }
+
+        .test-controller-info.active {
+            display: block;
+        }
+
+        .route-panel {
+            display: none;
+        }
+
+        .route-panel.active {
+            display: block;
+        }
+
+        #routeSummary {
+            color: #dce7ed;
+            font-family: monospace;
+            font-size: 11px;
+            line-height: 1.7;
+        }
+
+        #routeInstructions {
+            max-height: 180px;
+            margin-top: 12px;
+            overflow-y: auto;
+        }
+
+        .route-instruction {
+            padding: 8px 0;
+            border-top: 1px solid rgba(255,255,255,.05);
+            color: #7c8792;
+            font-family: monospace;
+            font-size: 9px;
+        }
+
+        .radar-page .hud-button {
+            cursor: pointer;
+        }
+
+        /*
+         * FULLSCREEN
+         *
+         * Importante:
+         * No usamos "position: fixed" para simular fullscreen.
+         * El API Fullscreen ya coloca el panel sobre toda la pantalla.
+         */
+        .radar-map-panel:fullscreen {
+            width: 100vw;
+            height: 100vh;
+            min-height: 100vh;
+            margin: 0;
+            border: 0;
+            background: #090b0f;
+        }
+
+        .radar-map-panel:-webkit-full-screen {
+            width: 100vw;
+            height: 100vh;
+            min-height: 100vh;
+            margin: 0;
+            border: 0;
+            background: #090b0f;
+        }
+
+        .radar-map-panel:fullscreen #map,
+        .radar-map-panel:-webkit-full-screen #map {
+            min-height: 100vh;
+        }
+
+        body.radar-is-fullscreen {
+            overflow: hidden;
+        }
+
+        @media (max-width: 1000px) {
+            .radar-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .radar-sidebar {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (max-width: 700px) {
+            .radar-hud {
+                width: calc(100% - 14px);
+                margin: 7px auto;
+            }
+
+            .radar-layout {
+                display: block;
+            }
+
+            .radar-sidebar {
+                display: flex;
+                margin-top: 10px;
+            }
+
+            .radar-map-panel,
+            #map {
+                min-height: 620px;
+            }
+
+            .map-search {
+                left: 12px;
+                right: 12px;
+                transform: none;
+                width: auto;
+            }
+
+            #fullscreenButton {
+                top: 70px;
+            }
+
+            #mapStatus {
+                top: 125px;
+                max-width: calc(100% - 36px);
+            }
+
+            #mapSpeed {
+                bottom: 70px;
+            }
+        }
+    </style>
+</head>
+
+<body class="home-page radar-page">
+
+<header class="site-header">
+    <div class="header-inner">
+        <a href="/" class="site-logo" aria-label="Keolel Home">
+            <img src="/assets/icon.png" alt="Keolel">
+            <span>KEOLEL</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Main navigation">
+            <a href="/">Home</a>
+            <a href="/converter/">Converter</a>
+            <a href="/radar/" class="active">Radar</a>
+        </nav>
+    </div>
+</header>
+
+<main class="page">
+    <section class="hud radar-hud" aria-labelledby="radar-page-title">
+
+        <div class="hud-corner hud-corner-top-left"></div>
+        <div class="hud-corner hud-corner-top-right"></div>
+        <div class="hud-corner hud-corner-bottom-left"></div>
+        <div class="hud-corner hud-corner-bottom-right"></div>
+
+        <div class="hud-frame-line hud-frame-top"></div>
+        <div class="hud-frame-line hud-frame-bottom"></div>
+
+        <header class="hud-header radar-header">
+            <div class="hud-emblem">
+                <span></span>
+            </div>
+
+            <p class="hud-overline">GEOSPATIAL TRAFFIC SYSTEM</p>
+
+            <h1 class="hud-title" id="radar-page-title">RADAR</h1>
+
+            <div class="hud-title-line">
+                <span></span>
+                <i></i>
+                <span></span>
+            </div>
+
+            <p class="hud-subtitle">
+                Navigation · Speed Cameras · Route Intelligence
+            </p>
+
+            <div class="radar-system-info">
+                <span class="radar-status-dot"></span>
+                <span class="active" id="systemStatus">SYSTEM ONLINE</span>
+                <span>·</span>
+                <span>GPS</span>
+                <span id="gpsStateHeader">OFF</span>
+                <span>·</span>
+                <span>RADARS</span>
+                <span id="radarCountHeader">00</span>
+            </div>
+        </header>
+
+        <div class="hud-content">
+
+            <section class="section">
+
+                <div class="section-heading">
+                    <span class="section-number">01</span>
+                    <h2 class="section-title">RADAR MAP</h2>
+                </div>
+
+                <div class="radar-layout">
+
+                    <div class="radar-map-panel" id="radarMapPanel">
+
+                        <div id="map"></div>
+
+                        <div class="map-search">
+                            <input
+                                    id="destinationSearch"
+                                    type="search"
+                                    autocomplete="off"
+                                    placeholder="BUSCAR DESTINO..."
+                                    aria-label="Buscar destino"
+                            >
+
+                            <button
+                                    id="destinationSearchButton"
+                                    type="button"
+                                    aria-label="Buscar destino"
+                            >
+                                →
+                            </button>
+                        </div>
+
+                        <button
+                                id="fullscreenButton"
+                                type="button"
+                                aria-label="Pantalla completa"
+                                title="Pantalla completa"
+                        >
+                            ⛶
+                        </button>
+
+                        <button
+                                id="locateButton"
+                                type="button"
+                        >
+                            📍 MI UBICACIÓN
+                        </button>
+
+                        <div id="mapStatus" class="map-overlay">
+                            Esperando ubicación...
+                        </div>
+
+                        <div id="mapSpeed" class="map-overlay">
+                            -- KM/H
+                        </div>
+
+                        <div class="map-overlay map-top-right">
+                            <div class="map-label">
+                                LIVE TRACKING
+                            </div>
+                        </div>
+
+                        <div class="map-overlay map-bottom-right">
+                            <div class="map-label">
+                                OSM DATA
+                            </div>
+                        </div>
+
+                        <div id="radarWarning">
+                            <span id="radarWarningDistance">300 M</span>
+                            <span id="radarWarningLimit">LÍMITE -- KM/H</span>
+                        </div>
+
+                    </div>
+
+                    <aside class="radar-sidebar">
+
+                        <div class="radar-panel">
+                            <div class="radar-panel-title">
+                                <span></span>
+                                NAVIGATION
+                            </div>
+
+                            <!-- IDs únicos: ya no existe un segundo #gpsState -->
+                            <div class="radar-metric">
+                                <span>GPS</span>
+                                <strong id="gpsStateSidebar">OFF</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>RADARS</span>
+                                <strong id="radarCountSidebar">00</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>ROUTE</span>
+                                <strong id="routeState">NONE</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>DISTANCE</span>
+                                <strong id="routeDistance">--</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>ETA</span>
+                                <strong id="routeEta">--</strong>
+                            </div>
+                        </div>
+
+                        <div class="radar-panel">
+                            <div class="radar-panel-title">
+                                <span></span>
+                                TEST MODE
+                            </div>
+
+                            <div class="radar-toggle-row">
+                                <div class="radar-toggle-text">
+                                    <strong>SIMULATION</strong>
+                                    <span>
+                                        Mueve la posición manualmente para probar distancias.
+                                    </span>
+                                </div>
+
+                                <label class="radar-toggle">
+                                    <input
+                                            id="simulationToggle"
+                                            type="checkbox"
+                                    >
+                                    <span class="radar-toggle-slider"></span>
+                                </label>
+                            </div>
+
+                            <div
+                                    id="testController"
+                                    class="test-controller"
+                            >
+                                <button
+                                        class="up"
+                                        type="button"
+                                        data-direction="up"
+                                >
+                                    ▲
+                                </button>
+
+                                <button
+                                        class="left"
+                                        type="button"
+                                        data-direction="left"
+                                >
+                                    ◀
+                                </button>
+
+                                <button
+                                        class="center"
+                                        type="button"
+                                        disabled
+                                >
+                                    ◆
+                                </button>
+
+                                <button
+                                        class="right"
+                                        type="button"
+                                        data-direction="right"
+                                >
+                                    ▶
+                                </button>
+
+                                <button
+                                        class="down"
+                                        type="button"
+                                        data-direction="down"
+                                >
+                                    ▼
+                                </button>
+                            </div>
+
+                            <div
+                                    id="testControllerInfo"
+                                    class="test-controller-info"
+                            >
+                                MODO PRUEBA ACTIVO · USA EL MANDO PARA MOVER LA POSICIÓN
+                            </div>
+                        </div>
+
+                        <div
+                                class="radar-panel route-panel"
+                                id="routePanel"
+                        >
+                            <div class="radar-panel-title">
+                                <span></span>
+                                ACTIVE ROUTE
+                            </div>
+
+                            <div id="routeSummary">
+                                Sin destino.
+                            </div>
+
+                            <div id="routeInstructions"></div>
+                        </div>
+
+                        <div class="radar-panel">
+                            <div class="radar-panel-title">
+                                <span></span>
+                                SYSTEM
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>WARNING</span>
+                                <strong>300 M</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>MAP</span>
+                                <strong>OPENSTREETMAP</strong>
+                            </div>
+
+                            <div class="radar-metric">
+                                <span>VOICE</span>
+                                <strong>ENABLED</strong>
+                            </div>
+                        </div>
+
+                    </aside>
+                </div>
+
+            </section>
+
+            <div class="hud-divider">
+                <span></span>
+            </div>
+
+            <section class="section">
+
+                <div class="section-heading">
+                    <span class="section-number">02</span>
+                    <h2 class="section-title">RADAR DETECTION</h2>
+                </div>
+
+                <div class="intro-panel">
+                    <div class="intro-symbol">◇</div>
+
+                    <div class="intro-content">
+                        <p class="section-text">
+                            Los radares se muestran sobre el mapa y las alertas
+                            utilizan la posición actual del dispositivo.
+                            Con un destino seleccionado, la detección se limita
+                            a los radares situados sobre la ruta calculada.
+                        </p>
+
+                        <div class="intro-line">
+                            <span></span>
+                        </div>
+
+                        <div class="intro-meta">
+                            <span>GPS</span>
+                            <b>/</b>
+                            <span>OSM</span>
+                            <b>/</b>
+                            <span>RADAR</span>
+                            <b>/</b>
+                            <span>2026</span>
+                        </div>
+                    </div>
+                </div>
+
+            </section>
+
+            <div class="hud-divider">
+                <span></span>
+            </div>
+
+            <section class="section">
+
+                <div class="section-heading">
+                    <span class="section-number">03</span>
+                    <h2 class="section-title">SYSTEM STATUS</h2>
+                </div>
+
+                <div class="archive-panel">
+
+                    <div class="archive-status">
+                        <span class="archive-dot"></span>
+
+                        <div>
+                            <strong id="systemStatusBottom">
+                                ACTIVE
+                            </strong>
+
+                            <span>
+                                Radar detection and geolocation system initialized.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="archive-metrics">
+
+                        <div class="archive-metric">
+                            <span>RADARS</span>
+                            <strong id="radarCountBottom">00</strong>
+                        </div>
+
+                        <div class="archive-metric">
+                            <span>GPS</span>
+                            <strong id="gpsStateBottom">OFF</strong>
+                        </div>
+
+                        <div class="archive-metric">
+                            <span>STATUS</span>
+                            <strong>ONLINE</strong>
+                        </div>
+
+                    </div>
+                </div>
+
+            </section>
+
+        </div>
+
+        <div class="hud-bottom-decoration">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+
+    </section>
+</main>
+
+<footer class="site-footer">
+    <span>© 2026 KEOLEL</span>
+</footer>
+
+<script
+        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+        crossorigin=""
+></script>
+
+<script src="/js/radar.js" defer></script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", () => {
+        const mapPanel = document.getElementById("radarMapPanel");
+        const fullscreenButton = document.getElementById("fullscreenButton");
+
+        const simulationToggle =
+            document.getElementById("simulationToggle");
+
+        const testController =
+            document.getElementById("testController");
+
+        const testControllerInfo =
+            document.getElementById("testControllerInfo");
+
+        const routePanel =
+            document.getElementById("routePanel");
+
+        /*
+         * ---------------------------------------------------------
+         * FULLSCREEN
+         * ---------------------------------------------------------
+         */
+
+        const invalidateMapSize = () => {
+            if (window.TrafficMap?.map) {
+                setTimeout(() => {
+                    TrafficMap.map.invalidateSize(true);
+                }, 200);
+            }
+        };
+
+        const syncFullscreen = () => {
+            const active =
+                document.fullscreenElement === mapPanel;
+
+            document.body.classList.toggle(
+                "radar-is-fullscreen",
+                active
+            );
+
+            if (active) {
+                fullscreenButton.textContent = "×";
+                fullscreenButton.setAttribute(
+                    "aria-label",
+                    "Salir de pantalla completa"
+                );
+                fullscreenButton.setAttribute(
+                    "title",
+                    "Salir de pantalla completa"
+                );
+            } else {
+                fullscreenButton.textContent = "⛶";
+                fullscreenButton.setAttribute(
+                    "aria-label",
+                    "Pantalla completa"
+                );
+                fullscreenButton.setAttribute(
+                    "title",
+                    "Pantalla completa"
+                );
+            }
+
+            invalidateMapSize();
+        };
+
+        fullscreenButton.addEventListener("click", async () => {
+            try {
+                if (document.fullscreenElement) {
+                    await document.exitFullscreen();
+                    return;
+                }
+
+                if (mapPanel.requestFullscreen) {
+                    await mapPanel.requestFullscreen();
+                    return;
+                }
+
+                /*
+                 * Fallback para navegadores sin Fullscreen API.
+                 */
+                mapPanel.style.position = "fixed";
+                mapPanel.style.inset = "0";
+                mapPanel.style.zIndex = "99999";
+                mapPanel.style.width = "100vw";
+                mapPanel.style.height = "100vh";
+                mapPanel.style.minHeight = "100vh";
+
+                document.body.classList.add(
+                    "radar-is-fullscreen"
+                );
+
+                fullscreenButton.textContent = "×";
+
+                invalidateMapSize();
+
+            } catch (error) {
+                console.error(
+                    "Fullscreen error:",
+                    error
+                );
+            }
+        });
+
+        document.addEventListener(
+            "fullscreenchange",
+            syncFullscreen
+        );
+
+        /*
+         * ESC / fallback fullscreen.
+         */
+        document.addEventListener("keydown", event => {
+            if (
+                event.key === "Escape" &&
+                !document.fullscreenElement &&
+                document.body.classList.contains(
+                    "radar-is-fullscreen"
+                )
+            ) {
+                mapPanel.style.position = "";
+                mapPanel.style.inset = "";
+                mapPanel.style.zIndex = "";
+                mapPanel.style.width = "";
+                mapPanel.style.height = "";
+                mapPanel.style.minHeight = "";
+
+                document.body.classList.remove(
+                    "radar-is-fullscreen"
+                );
+
+                fullscreenButton.textContent = "⛶";
+
+                invalidateMapSize();
+            }
+        });
+
+        /*
+         * ---------------------------------------------------------
+         * TEST / SIMULATION MODE
+         * ---------------------------------------------------------
+         */
+
+        simulationToggle.addEventListener("change", () => {
+            const active = simulationToggle.checked;
+
+            testController.classList.toggle(
+                "active",
+                active
+            );
+
+            testControllerInfo.classList.toggle(
+                "active",
+                active
+            );
+
+            if (!window.TrafficMap) {
+                return;
+            }
+
+            if (active) {
+                if (
+                    typeof TrafficMap.startSimulation ===
+                    "function"
+                ) {
+                    TrafficMap.startSimulation();
+                }
+            } else {
+                if (
+                    typeof TrafficMap.stopSimulation ===
+                    "function"
+                ) {
+                    TrafficMap.stopSimulation();
+                }
+
+                if (
+                    typeof TrafficMap.requestLocation ===
+                    "function"
+                ) {
+                    TrafficMap.requestLocation(true);
+                }
+            }
+        });
+
+        /*
+         * ---------------------------------------------------------
+         * SIMULATION CONTROLLER
+         * ---------------------------------------------------------
+         */
+
+        document
+            .querySelectorAll("[data-direction]")
+            .forEach(button => {
+
+                button.addEventListener("click", () => {
+
+                    if (
+                        !window.TrafficMap?.simulation?.active
+                    ) {
+                        return;
+                    }
+
+                    const simulation =
+                        TrafficMap.simulation;
+
+                    const direction =
+                        button.dataset.direction;
+
+                    const meters = 20;
+
+                    let bearing =
+                        Number(simulation.heading) || 0;
+
+                    if (direction === "down") {
+                        bearing =
+                            (bearing + 180) % 360;
+                    }
+
+                    if (direction === "left") {
+                        bearing =
+                            (bearing + 270) % 360;
+                    }
+
+                    if (direction === "right") {
+                        bearing =
+                            (bearing + 90) % 360;
+                    }
+
+                    if (
+                        typeof TrafficMap.destinationPoint !==
+                        "function"
+                    ) {
+                        return;
+                    }
+
+                    const next =
+                        TrafficMap.destinationPoint(
+                            simulation.latitude,
+                            simulation.longitude,
+                            bearing,
+                            meters
+                        );
+
+                    simulation.latitude =
+                        next.latitude;
+
+                    simulation.longitude =
+                        next.longitude;
+
+                    if (
+                        typeof TrafficMap.updateUserMarker ===
+                        "function"
+                    ) {
+                        TrafficMap.updateUserMarker(
+                            simulation.latitude,
+                            simulation.longitude,
+                            5
+                        );
+                    }
+
+                    if (
+                        simulation.radar &&
+                        typeof TrafficMap.distanceMeters ===
+                        "function"
+                    ) {
+                        simulation.distance =
+                            TrafficMap.distanceMeters(
+                                simulation.latitude,
+                                simulation.longitude,
+                                simulation.radar.latitude,
+                                simulation.radar.longitude
+                            );
+                    }
+
+                    if (
+                        typeof TrafficMap.checkRadars ===
+                        "function"
+                    ) {
+                        TrafficMap.checkRadars(
+                            simulation.latitude,
+                            simulation.longitude,
+                            simulation.heading
+                        );
+                    }
+
+                    if (
+                        typeof TrafficMap.updateSimulationUI ===
+                        "function"
+                    ) {
+                        TrafficMap.updateSimulationUI();
+                    }
+
+                    if (TrafficMap.map) {
+                        TrafficMap.map.panTo(
+                            [
+                                simulation.latitude,
+                                simulation.longitude
+                            ],
+                            {
+                                animate: true,
+                                duration: 0.25
+                            }
+                        );
+                    }
+                });
+            });
+
+        /*
+         * ---------------------------------------------------------
+         * SYNC DE ESTADOS
+         *
+         * Ya no hay IDs duplicados.
+         * radar.js puede seguir trabajando con los IDs principales
+         * y aquí copiamos sus valores a los elementos secundarios.
+         * ---------------------------------------------------------
+         */
+
+        const syncValues = () => {
+
+            const gpsHeader =
+                document.getElementById(
+                    "gpsStateHeader"
+                );
+
+            const radarHeader =
+                document.getElementById(
+                    "radarCountHeader"
+                );
+
+            const gpsSidebar =
+                document.getElementById(
+                    "gpsStateSidebar"
+                );
+
+            const radarSidebar =
+                document.getElementById(
+                    "radarCountSidebar"
+                );
+
+            const gpsBottom =
+                document.getElementById(
+                    "gpsStateBottom"
+                );
+
+            const radarBottom =
+                document.getElementById(
+                    "radarCountBottom"
+                );
+
+            /*
+             * radar.js normalmente trabaja con:
+             * #gpsState
+             * #radarCount
+             *
+             * Como esos IDs ahora solo pueden existir una vez,
+             * usamos esos elementos como fuente si existen.
+             */
+
+            const sourceGps =
+                document.getElementById("gpsState");
+
+            const sourceRadar =
+                document.getElementById("radarCount");
+
+            if (sourceGps) {
+
+                const value =
+                    sourceGps.textContent;
+
+                if (gpsHeader) {
+                    gpsHeader.textContent = value;
+                }
+
+                if (gpsSidebar) {
+                    gpsSidebar.textContent = value;
+                }
+
+                if (gpsBottom) {
+                    gpsBottom.textContent = value;
+                }
+            }
+
+            if (sourceRadar) {
+
+                const value =
+                    sourceRadar.textContent;
+
+                if (radarHeader) {
+                    radarHeader.textContent = value;
+                }
+
+                if (radarSidebar) {
+                    radarSidebar.textContent = value;
+                }
+
+                if (radarBottom) {
+                    radarBottom.textContent = value;
+                }
+            }
+        };
+
+        /*
+         * ---------------------------------------------------------
+         * DESTINATION SEARCH
+         * ---------------------------------------------------------
+         */
+
+        const searchInput =
+            document.getElementById(
+                "destinationSearch"
+            );
+
+        const searchButton =
+            document.getElementById(
+                "destinationSearchButton"
+            );
+
+        const searchDestination = async () => {
+
+            const query =
+                searchInput.value.trim();
+
+            if (!query) {
+                return;
+            }
+
+            searchButton.disabled = true;
+            searchButton.textContent = "…";
+
+            try {
+
+                const response =
+                    await fetch(
+                        "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=uy&q=" +
+                        encodeURIComponent(query),
+                        {
+                            headers: {
+                                Accept:
+                                    "application/json"
+                            }
+                        }
+                    );
+
+                if (!response.ok) {
+                    throw new Error(
+                        "No se pudo buscar el destino."
+                    );
+                }
+
+                const results =
+                    await response.json();
+
+                if (!results.length) {
+
+                    if (
+                        window.TrafficMap?.showStatus
+                    ) {
+                        TrafficMap.showStatus(
+                            "DESTINO NO ENCONTRADO"
+                        );
+                    }
+
+                    return;
+                }
+
+                const result =
+                    results[0];
+
+                const latitude =
+                    Number(result.lat);
+
+                const longitude =
+                    Number(result.lon);
+
+                if (
+                    !Number.isFinite(latitude) ||
+                    !Number.isFinite(longitude)
+                ) {
+                    return;
+                }
+
+                if (window.TrafficMap?.map) {
+
+                    TrafficMap.map.setView(
+                        [
+                            latitude,
+                            longitude
+                        ],
+                        16
+                    );
+                }
+
+                if (window.TrafficMap) {
+
+                    TrafficMap.destination = {
+                        latitude,
+                        longitude,
+                        name:
+                        result.display_name
+                    };
+                }
+
+                routePanel.classList.add(
+                    "active"
+                );
+
+                const summary =
+                    document.getElementById(
+                        "routeSummary"
+                    );
+
+                if (summary) {
+                    summary.textContent =
+                        result.display_name;
+                }
+
+                const routeState =
+                    document.getElementById(
+                        "routeState"
+                    );
+
+                if (routeState) {
+                    routeState.textContent =
+                        "DESTINATION";
+                }
+
+                if (
+                    window.TrafficMap?.showStatus
+                ) {
+                    TrafficMap.showStatus(
+                        "DESTINO SELECCIONADO · CALCULANDO RUTA"
+                    );
+                }
+
+                if (
+                    window.TrafficMap &&
+                    typeof TrafficMap.calculateRouteToDestination ===
+                    "function"
+                ) {
+
+                    await TrafficMap
+                        .calculateRouteToDestination(
+                            latitude,
+                            longitude
+                        );
+                }
+
+            } catch (error) {
+
+                console.error(error);
+
+                if (
+                    window.TrafficMap?.showStatus
+                ) {
+                    TrafficMap.showStatus(
+                        "ERROR BUSCANDO DESTINO"
+                    );
+                }
+
+            } finally {
+
+                searchButton.disabled =
+                    false;
+
+                searchButton.textContent =
+                    "→";
+            }
+        };
+
+        searchButton.addEventListener(
+            "click",
+            searchDestination
+        );
+
+        searchInput.addEventListener(
+            "keydown",
+            event => {
+
+                if (event.key === "Enter") {
+
+                    event.preventDefault();
+
+                    searchDestination();
+                }
+            }
+        );
+
+        /*
+         * ---------------------------------------------------------
+         * INITIAL MAP RESIZE
+         * ---------------------------------------------------------
+         */
+
+        setTimeout(() => {
+
+            if (window.TrafficMap?.map) {
+                TrafficMap.map.invalidateSize(
+                    true
+                );
+            }
+
+            syncValues();
+
+        }, 800);
+
+        setInterval(
+            syncValues,
+            500
+        );
+    });
+</script>
+
+</body>
+</html>

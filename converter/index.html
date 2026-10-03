@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Keolel file converter">
+    <meta name="theme-color" content="#07080b">
+    <title>Converter | Keolel</title>
+    <link rel="stylesheet" href="/assets/css/style.css">
+</head>
+<body class="converter-page">
+
+<header class="site-header">
+    <div class="header-inner">
+        <a href="/" class="site-logo" aria-label="Keolel Home">
+            <img src="/assets/icon.png" alt="Keolel">
+            <span>KEOLEL</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Main navigation">
+            <a href="/">Home</a>
+            <a href="/converter/" class="active">Converter</a>
+            <a href="/radar/">Radar</a>
+        </nav>
+    </div>
+</header>
+
+<main class="page">
+    <section class="hud converter-hud">
+
+        <div class="hud-corner hud-corner-top-left"></div>
+        <div class="hud-corner hud-corner-top-right"></div>
+        <div class="hud-corner hud-corner-bottom-left"></div>
+        <div class="hud-corner hud-corner-bottom-right"></div>
+
+        <div class="hud-frame-line hud-frame-top"></div>
+        <div class="hud-frame-line hud-frame-bottom"></div>
+
+        <header class="hud-header">
+            <div class="hud-emblem">
+                <span></span>
+            </div>
+
+            <p class="hud-overline">KEOLEL SYSTEM</p>
+
+            <h1 class="hud-title">CONVERTER</h1>
+
+            <div class="hud-title-line">
+                <span></span>
+                <i></i>
+                <span></span>
+            </div>
+
+            <p class="hud-subtitle">
+                Convert files directly in your browser
+            </p>
+        </header>
+
+        <div class="hud-content">
+
+            <section class="section">
+                <div class="hud-card converter-card">
+
+                    <input
+                            id="file-input"
+                            type="file"
+                            accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.txt,.pdf,.docx,.xlsx,.pptx"
+                            hidden
+                    >
+
+                    <div
+                            id="drop-zone"
+                            class="converter-dropzone"
+                            tabindex="0"
+                            role="button"
+                            aria-label="Select or drop a file"
+                    >
+                        <div class="dropzone-runes">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </div>
+
+                        <div class="dropzone-icon">
+                            <div class="dropzone-icon-inner">+</div>
+                        </div>
+
+                        <h2 class="dropzone-title">
+                            SELECT YOUR FILE
+                        </h2>
+
+                        <p class="dropzone-text">
+                            <span>DRAG &amp; DROP</span>
+                            <b>OR</b>
+                            <span>CLICK TO BROWSE</span>
+                        </p>
+
+                        <div class="dropzone-formats">
+                            PNG · JPG · WEBP · GIF · BMP · TXT · PDF · WORD · EXCEL · POWERPOINT
+                        </div>
+                    </div>
+
+                    <div
+                            id="file-preview"
+                            class="converter-preview"
+                            hidden
+                    >
+                        <div class="preview-corner preview-corner-tl"></div>
+                        <div class="preview-corner preview-corner-tr"></div>
+                        <div class="preview-corner preview-corner-bl"></div>
+                        <div class="preview-corner preview-corner-br"></div>
+
+                        <div class="converter-preview-media">
+                            <div
+                                    id="preview-image-container"
+                                    class="preview-image-container"
+                                    hidden
+                            >
+                                <img
+                                        id="preview-image"
+                                        alt="File preview"
+                                >
+                            </div>
+
+                            <div
+                                    id="preview-icon"
+                                    class="converter-preview-icon"
+                                    hidden
+                            >
+                                <span id="preview-icon-text">FILE</span>
+                            </div>
+
+                            <iframe
+                                    id="preview-pdf"
+                                    class="converter-preview-pdf"
+                                    title="PDF preview"
+                                    hidden
+                            ></iframe>
+
+                            <pre
+                                    id="preview-text"
+                                    class="converter-preview-text"
+                                    hidden
+                            ></pre>
+                        </div>
+
+                        <div class="converter-file-info">
+                            <span class="preview-label">SELECTED FILE</span>
+
+                            <strong
+                                    id="file-name"
+                                    title=""
+                            ></strong>
+
+                            <span id="file-details"></span>
+                        </div>
+
+                        <button
+                                id="file-change-button"
+                                class="converter-change-button"
+                                type="button"
+                        >
+                            CHANGE
+                        </button>
+                    </div>
+
+                    <div
+                            id="converter-controls"
+                            class="converter-controls"
+                            hidden
+                    >
+                        <div class="converter-output-header">
+                            <span class="converter-output-line"></span>
+
+                            <label
+                                    class="converter-label"
+                                    for="output-format"
+                            >
+                                CONVERT TO
+                            </label>
+
+                            <span class="converter-output-line"></span>
+                        </div>
+
+                        <div class="converter-select-wrapper">
+                            <span class="select-side-decoration left"></span>
+
+                            <select
+                                    id="output-format"
+                                    class="converter-select"
+                                    disabled
+                            ></select>
+
+                            <span class="select-arrow">◆</span>
+
+                            <span class="select-side-decoration right"></span>
+                        </div>
+
+                        <button
+                                id="convert-button"
+                                class="hud-button converter-button"
+                                type="button"
+                                disabled
+                        >
+                            <span>CONVERT FILE</span>
+                            <b>◆</b>
+                        </button>
+                    </div>
+
+                    <p
+                            id="converter-status"
+                            class="hud-status"
+                            aria-live="polite"
+                    >
+                        SELECT A FILE TO BEGIN.
+                    </p>
+
+                </div>
+            </section>
+
+            <div class="hud-divider">
+                <span></span>
+            </div>
+
+            <section class="section">
+                <div class="section-heading">
+                    <span class="section-number">01</span>
+                    <h2 class="section-title">INFORMATION</h2>
+                </div>
+
+                <p class="section-text">
+                    Files are processed locally in your browser.
+                    Nothing needs to be uploaded to a server.
+                </p>
+
+                <p class="section-text">
+                    Supported input files include common image,
+                    text, PDF and Microsoft Office formats.
+                </p>
+            </section>
+
+        </div>
+
+        <div class="hud-bottom-decoration">
+            <span></span>
+            <span></span>
+            <span></span>
+        </div>
+
+    </section>
+</main>
+
+<footer class="site-footer">
+    © 2026 KEOLEL
+</footer>
+
+<script src="/js/converter.js"></script>
+
+</body>
+</html>
