@@ -57,11 +57,15 @@ class TrafficMap {
         heading: 0,
         speed: 40,
         moveInterval: null,
-        stepMeters: 10
+        stepMeters: 10,
+        movementTimer: null,
+        manualCamera: true
     };
 
     static searchDebounceTimer = null;
     static warningTimeout = null;
+    static testKeyHandler = null;
+    static testMapClickHandler = null;
 
     static async init() {
         if (this.initialized) {
@@ -98,7 +102,14 @@ class TrafficMap {
 
         this.map = L.map("map", {
             zoomControl: true,
-            attributionControl: true
+            attributionControl: true,
+
+            dragging: true,
+            touchZoom: true,
+            scrollWheelZoom: true,
+            doubleClickZoom: true,
+            boxZoom: true,
+            keyboard: true
         }).setView(
             [-34.9011, -56.1645],
             13
@@ -112,6 +123,32 @@ class TrafficMap {
                     "&copy; OpenStreetMap contributors"
             }
         ).addTo(this.map);
+
+        this.testMapClickHandler = event => {
+            if (!this.testMode.active) {
+                return;
+            }
+
+            if (!event?.latlng) {
+                return;
+            }
+
+            this.setTestPosition(
+                event.latlng.lat,
+                event.latlng.lng,
+                this.testMode.heading,
+                false
+            );
+
+            this.showStatus(
+                `TEST · posición manual ${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
+            );
+        };
+
+        this.map.on(
+            "click",
+            this.testMapClickHandler
+        );
     }
 
     static createControls() {
@@ -335,30 +372,35 @@ class TrafficMap {
 
         forward.type = "button";
         forward.textContent = "▲";
+        forward.title = "Avanzar";
 
         const left =
             document.createElement("button");
 
         left.type = "button";
         left.textContent = "◀";
+        left.title = "Girar izquierda";
 
         const stop =
             document.createElement("button");
 
         stop.type = "button";
         stop.textContent = "●";
+        stop.title = "Detener";
 
         const right =
             document.createElement("button");
 
         right.type = "button";
         right.textContent = "▶";
+        right.title = "Girar derecha";
 
         const backward =
             document.createElement("button");
 
         backward.type = "button";
         backward.textContent = "▼";
+        backward.title = "Retroceder";
 
         controls.appendChild(
             forward
@@ -437,6 +479,9 @@ class TrafficMap {
                             15 +
                             360
                         ) % 360;
+
+                    this.updateTestModeUI();
+                    return;
                 }
 
                 if (
@@ -447,6 +492,9 @@ class TrafficMap {
                             this.testMode.heading +
                             15
                         ) % 360;
+
+                    this.updateTestModeUI();
+                    return;
                 }
 
                 if (
@@ -471,9 +519,97 @@ class TrafficMap {
                 this.updateTestModeUI();
             };
 
+        const startContinuousMove =
+            direction => {
+                if (!this.testMode.active) {
+                    return;
+                }
+
+                this.stopContinuousTestMovement();
+
+                pressMove(direction);
+
+                this.testMode.movementTimer =
+                    setInterval(
+                        () => {
+                            if (
+                                !this.testMode.active
+                            ) {
+                                this.stopContinuousTestMovement();
+                                return;
+                            }
+
+                            pressMove(direction);
+                        },
+                        250
+                    );
+            };
+
+        const stopContinuousMove =
+            () => {
+                this.stopContinuousTestMovement();
+            };
+
         forward.addEventListener(
-            "click",
-            () => pressMove("forward")
+            "mousedown",
+            () => startContinuousMove("forward")
+        );
+
+        forward.addEventListener(
+            "mouseup",
+            stopContinuousMove
+        );
+
+        forward.addEventListener(
+            "mouseleave",
+            stopContinuousMove
+        );
+
+        backward.addEventListener(
+            "mousedown",
+            () => startContinuousMove("backward")
+        );
+
+        backward.addEventListener(
+            "mouseup",
+            stopContinuousMove
+        );
+
+        backward.addEventListener(
+            "mouseleave",
+            stopContinuousMove
+        );
+
+        forward.addEventListener(
+            "touchstart",
+            event => {
+                event.preventDefault();
+                startContinuousMove("forward");
+            },
+            {
+                passive: false
+            }
+        );
+
+        forward.addEventListener(
+            "touchend",
+            stopContinuousMove
+        );
+
+        backward.addEventListener(
+            "touchstart",
+            event => {
+                event.preventDefault();
+                startContinuousMove("backward");
+            },
+            {
+                passive: false
+            }
+        );
+
+        backward.addEventListener(
+            "touchend",
+            stopContinuousMove
         );
 
         left.addEventListener(
@@ -486,15 +622,11 @@ class TrafficMap {
             () => pressMove("right")
         );
 
-        backward.addEventListener(
-            "click",
-            () => pressMove("backward")
-        );
-
         stop.addEventListener(
             "click",
             () => {
                 this.testMode.speed = 0;
+                this.stopContinuousTestMovement();
                 this.updateTestModeUI();
             }
         );
@@ -561,36 +693,68 @@ class TrafficMap {
                     return;
                 }
 
+                const target =
+                    event.target;
+
+                if (
+                    target &&
+                    (
+                        target.tagName === "INPUT" ||
+                        target.tagName === "TEXTAREA" ||
+                        target.isContentEditable
+                    )
+                ) {
+                    return;
+                }
+
+                const key =
+                    String(
+                        event.key
+                    ).toLowerCase();
+
                 if (
                     event.key === "ArrowUp" ||
-                    event.key.toLowerCase() === "w"
+                    key === "w"
                 ) {
                     event.preventDefault();
                     pressMove("forward");
+                    return;
                 }
 
                 if (
                     event.key === "ArrowDown" ||
-                    event.key.toLowerCase() === "s"
+                    key === "s"
                 ) {
                     event.preventDefault();
                     pressMove("backward");
+                    return;
                 }
 
                 if (
                     event.key === "ArrowLeft" ||
-                    event.key.toLowerCase() === "a"
+                    key === "a"
                 ) {
                     event.preventDefault();
                     pressMove("left");
+                    return;
                 }
 
                 if (
                     event.key === "ArrowRight" ||
-                    event.key.toLowerCase() === "d"
+                    key === "d"
                 ) {
                     event.preventDefault();
                     pressMove("right");
+                    return;
+                }
+
+                if (
+                    event.code === "Space"
+                ) {
+                    event.preventDefault();
+                    this.testMode.speed = 0;
+                    this.stopContinuousTestMovement();
+                    this.updateTestModeUI();
                 }
             };
 
@@ -598,6 +762,19 @@ class TrafficMap {
             "keydown",
             this.testKeyHandler
         );
+    }
+
+    static stopContinuousTestMovement() {
+        if (
+            this.testMode.movementTimer
+        ) {
+            clearInterval(
+                this.testMode.movementTimer
+            );
+
+            this.testMode.movementTimer =
+                null;
+        }
     }
 
     static setupVoice() {
@@ -966,6 +1143,339 @@ class TrafficMap {
         }
     }
 
+    static enableTestMode() {
+        if (!this.map) {
+            return;
+        }
+
+        if (
+            this.testMode.active
+        ) {
+            return;
+        }
+
+        this.stopRealTracking();
+
+        if (
+            this.lastPosition &&
+            Number.isFinite(
+                this.lastPosition.latitude
+            ) &&
+            Number.isFinite(
+                this.lastPosition.longitude
+            )
+        ) {
+            this.testMode.latitude =
+                this.lastPosition.latitude;
+
+            this.testMode.longitude =
+                this.lastPosition.longitude;
+
+            if (
+                Number.isFinite(
+                    this.lastPosition.heading
+                )
+            ) {
+                this.testMode.heading =
+                    this.lastPosition.heading;
+            }
+        } else {
+            const center =
+                this.map.getCenter();
+
+            this.testMode.latitude =
+                center.lat;
+
+            this.testMode.longitude =
+                center.lng;
+
+            this.testMode.heading = 0;
+        }
+
+        this.testMode.active = true;
+        this.testMode.speed = 40;
+        this.testMode.manualCamera = true;
+
+        this.stopContinuousTestMovement();
+
+        this.warnedRadars.clear();
+
+        this.setGpsState("TEST");
+
+        this.updateUserMarker(
+            this.testMode.latitude,
+            this.testMode.longitude,
+            5
+        );
+
+        this.lastPosition = {
+            latitude:
+                this.testMode.latitude,
+
+            longitude:
+                this.testMode.longitude,
+
+            accuracy: 5,
+
+            heading:
+                this.testMode.heading,
+
+            speed:
+                this.testMode.speed / 3.6
+        };
+
+        if (this.route) {
+            this.updateRouteProgress(
+                this.testMode.latitude,
+                this.testMode.longitude
+            );
+        } else {
+            this.renderNearbyRadars(
+                this.testMode.latitude,
+                this.testMode.longitude
+            );
+        }
+
+        this.showSpeed(
+            this.testMode.speed
+        );
+
+        this.updateTestModeUI();
+
+        this.showStatus(
+            "Modo prueba activado · flechas/WASD para conducir · click en mapa para reposicionar"
+        );
+    }
+
+    static disableTestMode() {
+        if (
+            !this.testMode.active
+        ) {
+            this.requestLocation(true);
+            return;
+        }
+
+        this.stopContinuousTestMovement();
+
+        this.testMode.active = false;
+
+        this.warnedRadars.clear();
+
+        this.setGpsState("SEARCH");
+
+        this.showStatus(
+            "Modo prueba desactivado. Recuperando ubicación real..."
+        );
+
+        this.requestLocation(true);
+    }
+
+    static setTestPosition(
+        latitude,
+        longitude,
+        heading = this.testMode.heading,
+        recenter = false
+    ) {
+        if (
+            !this.testMode.active
+        ) {
+            return;
+        }
+
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+        ) {
+            return;
+        }
+
+        this.testMode.latitude =
+            latitude;
+
+        this.testMode.longitude =
+            longitude;
+
+        this.testMode.heading =
+            (
+                Number(heading) || 0
+            ) % 360;
+
+        this.lastPosition = {
+            latitude,
+            longitude,
+            accuracy: 5,
+            heading:
+                this.testMode.heading,
+            speed:
+                this.testMode.speed / 3.6
+        };
+
+        this.updateUserMarker(
+            latitude,
+            longitude,
+            5
+        );
+
+        this.showSpeed(
+            this.testMode.speed
+        );
+
+        if (
+            recenter &&
+            this.map
+        ) {
+            this.map.setView(
+                [
+                    latitude,
+                    longitude
+                ],
+                this.map.getZoom(),
+                {
+                    animate: false
+                }
+            );
+        }
+
+        if (this.route) {
+            this.updateRouteProgress(
+                latitude,
+                longitude
+            );
+        } else {
+            this.renderNearbyRadars(
+                latitude,
+                longitude
+            );
+        }
+
+        this.checkRadars(
+            latitude,
+            longitude,
+            this.testMode.heading
+        );
+
+        this.updateTestModeUI();
+    }
+
+    static moveTestPosition(
+        heading
+    ) {
+        if (
+            !this.testMode.active ||
+            !Number.isFinite(
+                this.testMode.latitude
+            ) ||
+            !Number.isFinite(
+                this.testMode.longitude
+            )
+        ) {
+            return;
+        }
+
+        const speed =
+            Math.max(
+                0,
+                Number(
+                    this.testMode.speed
+                ) || 0
+            );
+
+        const distance =
+            speed <= 0
+                ? this.testMode.stepMeters
+                : Math.max(
+                    2,
+                    (
+                        speed / 3.6
+                    ) * 0.25
+                );
+
+        this.testMode.heading =
+            (
+                Number(heading) || 0
+            ) % 360;
+
+        const next =
+            this.destinationPoint(
+                this.testMode.latitude,
+                this.testMode.longitude,
+                this.testMode.heading,
+                distance
+            );
+
+        this.setTestPosition(
+            next.latitude,
+            next.longitude,
+            this.testMode.heading,
+            false
+        );
+    }
+
+    static updateTestModeUI() {
+        const button =
+            document.getElementById(
+                "testModeButton"
+            );
+
+        const status =
+            document.getElementById(
+                "testModeStatus"
+            );
+
+        const speed =
+            document.getElementById(
+                "testSpeedLabel"
+            );
+
+        if (button) {
+            button.textContent =
+                this.testMode.active
+                    ? "⏹ DESACTIVAR MODO PRUEBA"
+                    : "🧪 ACTIVAR MODO PRUEBA";
+        }
+
+        if (speed) {
+            speed.textContent =
+                `${Math.round(
+                    this.testMode.speed
+                )} KM/H`;
+        }
+
+        if (!status) {
+            return;
+        }
+
+        if (!this.testMode.active) {
+            status.textContent =
+                "Modo prueba desactivado.";
+
+            return;
+        }
+
+        status.textContent =
+            `TEST · ${this.testMode.latitude.toFixed(
+                6
+            )}, ${this.testMode.longitude.toFixed(
+                6
+            )} · RUMBO ${Math.round(
+                this.testMode.heading
+            )}°`;
+    }
+
+    static stopRealTracking() {
+        if (
+            this.watchId !== null &&
+            navigator.geolocation
+        ) {
+            navigator.geolocation.clearWatch(
+                this.watchId
+            );
+
+            this.watchId =
+                null;
+        }
+    }
+
     static async searchDestination(
         query
     ) {
@@ -1031,14 +1541,17 @@ class TrafficMap {
             if (!results.length) {
                 resultsElement.innerHTML =
                     `<div class="destination-empty">NO SE ENCONTRARON DESTINOS</div>`;
+
                 return;
             }
 
             for (
                 const result of results
-                ) {
+            ) {
                 const item =
-                    document.createElement("button");
+                    document.createElement(
+                        "button"
+                    );
 
                 item.type = "button";
                 item.className =
@@ -1186,11 +1699,11 @@ class TrafficMap {
 
             this.route = {
                 geometry:
-                route.geometry,
+                    route.geometry,
                 distance:
-                route.distance,
+                    route.distance,
                 duration:
-                route.duration,
+                    route.duration,
                 steps:
                     route.legs?.flatMap(
                         leg =>
@@ -1198,9 +1711,9 @@ class TrafficMap {
                     ) || [],
                 destination: {
                     latitude:
-                    destinationLatitude,
+                        destinationLatitude,
                     longitude:
-                    destinationLongitude,
+                        destinationLongitude,
                     name:
                         destinationName ||
                         "Destino"
@@ -1306,7 +1819,7 @@ class TrafficMap {
 
         for (
             const radar of this.allRadars
-            ) {
+        ) {
             const match =
                 this.closestPointOnRoute(
                     radar.latitude,
@@ -1321,9 +1834,9 @@ class TrafficMap {
                 result.push({
                     radar,
                     routeDistance:
-                    match.routeDistance,
+                        match.routeDistance,
                     distanceFromRoute:
-                    match.distance
+                        match.distance
                 });
             }
         }
@@ -1349,7 +1862,7 @@ class TrafficMap {
 
         for (
             const item of this.routeRadars
-            ) {
+        ) {
             this.createRadarMarker(
                 item.radar
             );
@@ -1402,7 +1915,7 @@ class TrafficMap {
 
         for (
             const item of this.routeRadars
-            ) {
+        ) {
             const radar =
                 item.radar;
 
@@ -1484,8 +1997,7 @@ class TrafficMap {
 
         for (
             let i = 0;
-            i <
-            coordinates.length - 1;
+            i < coordinates.length - 1;
             i++
         ) {
             const a =
@@ -1551,11 +2063,11 @@ class TrafficMap {
 
         return {
             distance:
-            bestDistance,
+                bestDistance,
             routeDistance:
-            bestRouteDistance,
+                bestRouteDistance,
             point:
-            bestPoint
+                bestPoint
         };
     }
 
@@ -1736,7 +2248,7 @@ class TrafficMap {
 
         for (
             const step of this.route.steps
-            ) {
+        ) {
             const distance =
                 Number(
                     step.distance || 0
@@ -2132,7 +2644,7 @@ out center tags;
 
         for (
             const url of this.overpassUrls
-            ) {
+        ) {
             try {
                 const response =
                     await fetch(
@@ -2190,10 +2702,10 @@ out center tags;
                                     `osm-${element.type}-${element.id}`,
 
                                 latitude:
-                                elementLatitude,
+                                    elementLatitude,
 
                                 longitude:
-                                elementLongitude,
+                                    elementLongitude,
 
                                 tags: {
                                     ...tags,
@@ -2242,13 +2754,13 @@ out center tags;
 
         return [
             latitude -
-            latitudeDelta,
+                latitudeDelta,
             longitude -
-            longitudeDelta,
+                longitudeDelta,
             latitude +
-            latitudeDelta,
+                latitudeDelta,
             longitude +
-            longitudeDelta
+                longitudeDelta
         ].join(",");
     }
 
@@ -2272,7 +2784,7 @@ out center tags;
 
         for (
             const radar of nearby
-            ) {
+        ) {
             this.createRadarMarker(
                 radar
             );
@@ -2579,7 +3091,7 @@ out center tags;
     ) {
         for (
             const name of possibleNames
-            ) {
+        ) {
             const index =
                 headers.indexOf(
                     this.normalizeText(
@@ -2601,7 +3113,7 @@ out center tags;
         ) {
             for (
                 const name of possibleNames
-                ) {
+            ) {
                 if (
                     headers[i].includes(
                         this.normalizeText(
@@ -2623,7 +3135,7 @@ out center tags;
     ) {
         for (
             const name of possibleNames
-            ) {
+        ) {
             const normalized =
                 this.normalizeText(
                     name
@@ -2631,9 +3143,9 @@ out center tags;
 
             for (
                 const key of Object.keys(
-                tags
-            )
-                ) {
+                    tags
+                )
+            ) {
                 if (
                     this.normalizeText(
                         key
@@ -2718,7 +3230,7 @@ out center tags;
 
         for (
             const radar of radars
-            ) {
+        ) {
             if (
                 !Number.isFinite(
                     radar.latitude
@@ -2751,9 +3263,9 @@ out center tags;
 
             if (
                 radar.tags?.official ===
-                "true" &&
+                    "true" &&
                 duplicate.tags?.official !==
-                "true"
+                    "true"
             ) {
                 const index =
                     result.indexOf(
@@ -2791,10 +3303,10 @@ out center tags;
                         height:32px;
                         border-radius:50%;
                         background:${
-                        official
-                            ? "#e53935"
-                            : "#ff7a00"
-                    };
+                            official
+                                ? "#e53935"
+                                : "#ff7a00"
+                        };
                         border:3px solid white;
                         display:flex;
                         align-items:center;
@@ -2903,7 +3415,7 @@ out center tags;
     static clearRadarMarkers() {
         for (
             const marker of this.radarMarkers
-            ) {
+        ) {
             if (this.map) {
                 this.map.removeLayer(
                     marker
@@ -2936,7 +3448,7 @@ out center tags;
 
         for (
             const radar of this.allRadars
-            ) {
+        ) {
             const distance =
                 this.distanceMeters(
                     latitude,
@@ -3220,7 +3732,7 @@ out center tags;
     ) {
         for (
             const id of this.warnedRadars
-            ) {
+        ) {
             const radar =
                 this.allRadars.find(
                     item =>
@@ -3365,298 +3877,6 @@ out center tags;
                     2,
                     "0"
                 );
-        }
-    }
-
-    static enableTestMode() {
-        if (!this.map) {
-            return;
-        }
-
-        if (
-            this.testMode.active
-        ) {
-            return;
-        }
-
-        if (!this.lastPosition) {
-            const center =
-                this.map.getCenter();
-
-            this.testMode.latitude =
-                center.lat;
-
-            this.testMode.longitude =
-                center.lng;
-        } else {
-            this.testMode.latitude =
-                this.lastPosition.latitude;
-
-            this.testMode.longitude =
-                this.lastPosition.longitude;
-
-            if (
-                Number.isFinite(
-                    this.lastPosition.heading
-                )
-            ) {
-                this.testMode.heading =
-                    this.lastPosition.heading;
-            }
-        }
-
-        this.stopRealTracking();
-
-        this.testMode.active = true;
-        this.testMode.speed = 40;
-
-        this.warnedRadars.clear();
-
-        this.setGpsState("TEST");
-
-        this.updateUserMarker(
-            this.testMode.latitude,
-            this.testMode.longitude,
-            5
-        );
-
-        if (this.route) {
-            this.updateRouteProgress(
-                this.testMode.latitude,
-                this.testMode.longitude
-            );
-        } else {
-            this.renderNearbyRadars(
-                this.testMode.latitude,
-                this.testMode.longitude
-            );
-        }
-
-        this.map.setView(
-            [
-                this.testMode.latitude,
-                this.testMode.longitude
-            ],
-            Math.max(
-                this.map.getZoom(),
-                16
-            )
-        );
-
-        this.updateTestModeUI();
-
-        this.showStatus(
-            "Modo prueba activado. Usa las flechas o WASD para moverte."
-        );
-    }
-
-    static disableTestMode() {
-        if (
-            !this.testMode.active
-        ) {
-            this.requestLocation(true);
-            return;
-        }
-
-        this.stopTestMovement();
-
-        this.testMode.active = false;
-
-        this.warnedRadars.clear();
-
-        this.setGpsState("SEARCH");
-
-        this.showStatus(
-            "Modo prueba desactivado. Recuperando ubicación real..."
-        );
-
-        this.requestLocation(true);
-    }
-
-    static stopTestMovement() {
-        if (
-            this.testMode.moveInterval
-        ) {
-            clearInterval(
-                this.testMode.moveInterval
-            );
-
-            this.testMode.moveInterval =
-                null;
-        }
-    }
-
-    static moveTestPosition(
-        heading
-    ) {
-        if (
-            !this.testMode.active ||
-            !Number.isFinite(
-                this.testMode.latitude
-            ) ||
-            !Number.isFinite(
-                this.testMode.longitude
-            )
-        ) {
-            return;
-        }
-
-        const speed =
-            Math.max(
-                0,
-                this.testMode.speed
-            );
-
-        const distance =
-            speed === 0
-                ? this.testMode.stepMeters
-                : Math.max(
-                    2,
-                    speed /
-                    3.6
-                );
-
-        this.testMode.heading =
-            heading;
-
-        const next =
-            this.destinationPoint(
-                this.testMode.latitude,
-                this.testMode.longitude,
-                heading,
-                distance
-            );
-
-        this.testMode.latitude =
-            next.latitude;
-
-        this.testMode.longitude =
-            next.longitude;
-
-        this.lastPosition = {
-            latitude:
-            this.testMode.latitude,
-
-            longitude:
-            this.testMode.longitude,
-
-            accuracy: 5,
-
-            heading:
-            this.testMode.heading,
-
-            speed:
-                speed / 3.6
-        };
-
-        this.updateUserMarker(
-            this.testMode.latitude,
-            this.testMode.longitude,
-            5
-        );
-
-        this.showSpeed(
-            speed
-        );
-
-        this.updateRadarArea(
-            this.testMode.latitude,
-            this.testMode.longitude
-        );
-
-        if (this.route) {
-            this.updateRouteProgress(
-                this.testMode.latitude,
-                this.testMode.longitude
-            );
-        } else {
-            this.renderNearbyRadars(
-                this.testMode.latitude,
-                this.testMode.longitude
-            );
-        }
-
-        this.checkRadars(
-            this.testMode.latitude,
-            this.testMode.longitude,
-            this.testMode.heading
-        );
-
-        this.map.panTo(
-            [
-                this.testMode.latitude,
-                this.testMode.longitude
-            ],
-            {
-                animate: true,
-                duration: 0.25
-            }
-        );
-
-        this.updateTestModeUI();
-    }
-
-    static updateTestModeUI() {
-        const button =
-            document.getElementById(
-                "testModeButton"
-            );
-
-        const status =
-            document.getElementById(
-                "testModeStatus"
-            );
-
-        const speed =
-            document.getElementById(
-                "testSpeedLabel"
-            );
-
-        if (button) {
-            button.textContent =
-                this.testMode.active
-                    ? "⏹ DESACTIVAR MODO PRUEBA"
-                    : "🧪 ACTIVAR MODO PRUEBA";
-        }
-
-        if (speed) {
-            speed.textContent =
-                `${Math.round(
-                    this.testMode.speed
-                )} KM/H`;
-        }
-
-        if (!status) {
-            return;
-        }
-
-        if (!this.testMode.active) {
-            status.textContent =
-                "Modo prueba desactivado.";
-            return;
-        }
-
-        status.textContent =
-            `TEST · ${this.testMode.latitude.toFixed(
-                6
-            )}, ${this.testMode.longitude.toFixed(
-                6
-            )} · RUMBO ${Math.round(
-                this.testMode.heading
-            )}°`;
-    }
-
-    static stopRealTracking() {
-        if (
-            this.watchId !== null &&
-            navigator.geolocation
-        ) {
-            navigator.geolocation.clearWatch(
-                this.watchId
-            );
-
-            this.watchId =
-                null;
         }
     }
 
@@ -3888,7 +4108,7 @@ out center tags;
     }
 
     static destroy() {
-        this.stopTestMovement();
+        this.stopContinuousTestMovement();
         this.stopRealTracking();
 
         if (
@@ -3898,6 +4118,22 @@ out center tags;
                 "keydown",
                 this.testKeyHandler
             );
+
+            this.testKeyHandler =
+                null;
+        }
+
+        if (
+            this.testMapClickHandler &&
+            this.map
+        ) {
+            this.map.off(
+                "click",
+                this.testMapClickHandler
+            );
+
+            this.testMapClickHandler =
+                null;
         }
 
         if (
@@ -3934,6 +4170,18 @@ out center tags;
             null;
 
         this.warnedRadars.clear();
+
+        this.testMode = {
+            active: false,
+            latitude: null,
+            longitude: null,
+            heading: 0,
+            speed: 40,
+            moveInterval: null,
+            stepMeters: 10,
+            movementTimer: null,
+            manualCamera: true
+        };
     }
 }
 
