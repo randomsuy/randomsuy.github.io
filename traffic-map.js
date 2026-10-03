@@ -7,32 +7,40 @@
             defaultZoom: 13,
             userZoom: 17,
             minZoom: 10,
-            maxZoom: 19
+            maxZoom: 19,
+            bounds: [
+                [-35.05, -56.45],
+                [-34.65, -55.85]
+            ]
         },
 
         gps: {
             enableHighAccuracy: true,
             timeout: 15000,
-            maximumAge: 3000
+            maximumAge: 2000
         },
 
         radar: {
             warningDistance: 300,
-            directionAngle: 55,
+            directionAngle: 65,
+            roadDistance: 90,
             queryRadius: 50000,
             refreshInterval: 300000
         },
 
         camera: {
             warningDistance: 300,
-            directionAngle: 55,
-            refreshInterval: 600000
+            directionAngle: 70,
+            roadDistance: 100,
+            refreshInterval: 900000,
+            source: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
+            proxy: "https://api.allorigins.win/raw?url="
         },
 
         deadEnd: {
             warningDistance: 180,
-            directionAngle: 55,
-            refreshInterval: 600000
+            directionAngle: 60,
+            refreshInterval: 300000
         },
 
         simulation: {
@@ -42,7 +50,7 @@
 
         services: {
             overpass: "https://overpass-api.de/api/interpreter",
-            cameraPage: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito"
+            nominatim: "https://nominatim.openstreetmap.org/search"
         }
     };
 
@@ -54,6 +62,7 @@
         radarLayer: null,
         cameraLayer: null,
         deadEndLayer: null,
+        roadLayer: null,
 
         radars: [],
         cameras: [],
@@ -67,34 +76,33 @@
         locationActive: false,
         lastPosition: null,
 
-        warningRadar: null,
-        warningCamera: null,
-        warningDeadEnd: null,
-
         radarRefreshTimer: null,
         cameraRefreshTimer: null,
         deadEndRefreshTimer: null,
 
-        lastRadarQuery: null,
-        lastCameraQuery: null,
-        lastDeadEndQuery: null,
+        lastRadarQuery: 0,
+        lastDeadEndQuery: 0,
 
-        speechEnabled: true,
-        radarAlertEnabled: true,
-        cameraAlertEnabled: true,
-        deadEndAlertEnabled: true,
-
-        announced: {
-            radar: null,
-            camera: null,
-            deadEnd: null
-        },
+        lastSpeech: 0,
 
         orientation: {
             active: false,
             heading: null,
             permission: "unknown",
             listener: null
+        },
+
+        alerts: {
+            voice: true,
+            radar: true,
+            camera: true,
+            deadEnd: true
+        },
+
+        announced: {
+            radar: null,
+            camera: null,
+            deadEnd: null
         },
 
         simulation: {
@@ -150,30 +158,6 @@
         return Math.min(x, 360 - x);
     }
 
-    function isAhead(
-        latitude,
-        longitude,
-        targetLatitude,
-        targetLongitude,
-        heading,
-        maxAngle = 55
-    ) {
-        const bearing =
-            bearingBetween(
-                latitude,
-                longitude,
-                targetLatitude,
-                targetLongitude
-            );
-
-        return (
-            angleDifference(
-                heading,
-                bearing
-            ) <= maxAngle
-        );
-    }
-
     function distanceMeters(
         latitude1,
         longitude1,
@@ -191,17 +175,13 @@
             Math.PI / 180;
 
         const deltaLat =
-            (
-                Number(latitude2) -
-                Number(latitude1)
-            ) *
+            (Number(latitude2) -
+                Number(latitude1)) *
             Math.PI / 180;
 
         const deltaLng =
-            (
-                Number(longitude2) -
-                Number(longitude1)
-            ) *
+            (Number(longitude2) -
+                Number(longitude1)) *
             Math.PI / 180;
 
         const a =
@@ -235,10 +215,8 @@
             Math.PI / 180;
 
         const deltaLng =
-            (
-                Number(longitude2) -
-                Number(longitude1)
-            ) *
+            (Number(longitude2) -
+                Number(longitude1)) *
             Math.PI / 180;
 
         const y =
@@ -319,115 +297,62 @@
     function createUserIcon() {
         return L.divIcon({
             className: "traffic-user-marker",
-
             html: `
-                <div style="
-                    width:20px;
-                    height:20px;
-                    border-radius:50%;
-                    background:#29d8ff;
-                    border:3px solid #06151b;
-                    box-shadow:
-                        0 0 0 4px rgba(41,216,255,.22),
-                        0 0 22px rgba(41,216,255,.95);
-                "></div>
+                <div class="user-marker">
+                    <div class="user-arrow"></div>
+                    <div class="user-dot"></div>
+                </div>
             `,
-
-            iconSize: [26, 26],
-            iconAnchor: [13, 13]
+            iconSize: [46, 46],
+            iconAnchor: [23, 23]
         });
     }
 
     function createRadarIcon(limit) {
-        const speed = Number(limit);
+        const speed =
+            Number(limit);
 
         const label =
-            Number.isFinite(speed) && speed > 0
+            Number.isFinite(speed) &&
+            speed > 0
                 ? speed
-                : "RADAR";
+                : "—";
 
         return L.divIcon({
             className: "traffic-radar-marker",
-
             html: `
-                <div style="
-                    width:42px;
-                    height:42px;
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    border-radius:50%;
-                    background:#240b0b;
-                    border:3px solid #ff3838;
-                    color:#ff6767;
-                    font-family:Arial,sans-serif;
-                    font-size:9px;
-                    font-weight:900;
-                    box-shadow:
-                        0 0 10px rgba(255,56,56,.95),
-                        0 0 28px rgba(255,56,56,.45);
-                ">
-                    ${label}
+                <div class="radar-marker">
+                    <div class="radar-ring"></div>
+                    <span>${label}</span>
                 </div>
             `,
-
-            iconSize: [42, 42],
-            iconAnchor: [21, 21]
+            iconSize: [44, 44],
+            iconAnchor: [22, 22]
         });
     }
 
     function createCameraIcon() {
         return L.divIcon({
             className: "traffic-camera-marker",
-
             html: `
-                <div style="
-                    width:38px;
-                    height:38px;
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    border-radius:12px;
-                    background:#3a2100;
-                    border:3px solid #ff9d00;
-                    color:#ffb52e;
-                    font-size:19px;
-                    box-shadow:
-                        0 0 12px rgba(255,157,0,.9),
-                        0 0 25px rgba(255,157,0,.4);
-                ">●</div>
+                <div class="camera-marker">
+                    <div class="camera-lens"></div>
+                    <div class="camera-body"></div>
+                </div>
             `,
-
-            iconSize: [38, 38],
-            iconAnchor: [19, 19]
+            iconSize: [42, 42],
+            iconAnchor: [21, 21]
         });
     }
 
     function createDeadEndIcon() {
         return L.divIcon({
-            className: "traffic-dead-end-marker",
-
+            className: "traffic-deadend-marker",
             html: `
-                <div style="
-                    width:32px;
-                    height:32px;
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    border-radius:50%;
-                    background:#251d00;
-                    border:3px solid #ffd000;
-                    color:#ffd000;
-                    font-family:Arial,sans-serif;
-                    font-size:16px;
-                    font-weight:900;
-                    box-shadow:
-                        0 0 10px rgba(255,208,0,.8);
-                ">!</div>
+                <div class="deadend-marker">!</div>
             `,
-
-            iconSize: [32, 32],
-            iconAnchor: [16, 16]
+            iconSize: [34, 34],
+            iconAnchor: [17, 17]
         });
     }
 
@@ -437,7 +362,8 @@
             return false;
         }
 
-        const mapElement = byId("map");
+        const mapElement =
+            byId("map");
 
         if (!mapElement) {
             return false;
@@ -455,9 +381,16 @@
                         CONFIG.map.minZoom,
                     maxZoom:
                         CONFIG.map.maxZoom,
-                    zoomControl: true,
-                    attributionControl: true,
-                    preferCanvas: true
+                    maxBounds:
+                        CONFIG.map.bounds,
+                    maxBoundsViscosity:
+                        0.85,
+                    zoomControl:
+                        true,
+                    attributionControl:
+                        true,
+                    preferCanvas:
+                        true
                 }
             );
 
@@ -466,18 +399,26 @@
             {
                 maxZoom: 19,
                 attribution:
-                    "&copy; OpenStreetMap contributors"
+                    "&copy; OpenStreetMap contributors",
+                crossOrigin: true
             }
         ).addTo(state.map);
 
         state.radarLayer =
-            L.layerGroup().addTo(state.map);
+            L.layerGroup()
+                .addTo(state.map);
 
         state.cameraLayer =
-            L.layerGroup().addTo(state.map);
+            L.layerGroup()
+                .addTo(state.map);
 
         state.deadEndLayer =
-            L.layerGroup().addTo(state.map);
+            L.layerGroup()
+                .addTo(state.map);
+
+        state.roadLayer =
+            L.layerGroup()
+                .addTo(state.map);
 
         state.map.on(
             "click",
@@ -491,10 +432,6 @@
 
                 state.simulation.longitude =
                     event.latlng.lng;
-
-                state.announced.radar = null;
-                state.announced.camera = null;
-                state.announced.deadEnd = null;
 
                 updateSimulationPosition();
             }
@@ -575,15 +512,14 @@
             );
 
         let heading =
-            Number(
+            normalizeHeading(
                 position.coords.heading
             );
 
-        if (!Number.isFinite(heading)) {
+        if (heading === null) {
             heading =
                 state.orientation.heading ??
                 state.lastPosition?.heading ??
-                state.simulation.heading ??
                 0;
         }
 
@@ -593,7 +529,8 @@
             accuracy,
             speed,
             heading,
-            timestamp: Date.now()
+            timestamp:
+                Date.now()
         };
 
         state.locationActive = true;
@@ -603,7 +540,9 @@
             longitude
         );
 
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             const currentZoom =
                 state.map?.getZoom();
 
@@ -615,7 +554,10 @@
                 )
             ) {
                 state.map.setView(
-                    [latitude, longitude],
+                    [
+                        latitude,
+                        longitude
+                    ],
                     CONFIG.map.userZoom,
                     {
                         animate: true
@@ -624,11 +566,13 @@
             }
         }
 
-        checkAllAlerts(
-            latitude,
-            longitude,
-            heading
-        );
+        if (!state.simulation.active) {
+            checkAllAlerts(
+                latitude,
+                longitude,
+                heading
+            );
+        }
 
         showStatus(
             `GPS ACTIVO · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`
@@ -638,7 +582,8 @@
     function handlePositionError(error) {
         state.locationActive = false;
 
-        let message = "ERROR DE GPS";
+        let message =
+            "ERROR DE GPS";
 
         if (error?.code === 1) {
             message =
@@ -669,7 +614,10 @@
         if (!state.userMarker) {
             state.userMarker =
                 L.marker(
-                    [latitude, longitude],
+                    [
+                        latitude,
+                        longitude
+                    ],
                     {
                         icon:
                             createUserIcon(),
@@ -686,157 +634,178 @@
                         }
                     );
         } else {
-            state.userMarker.setLatLng(
-                [latitude, longitude]
-            );
+            state.userMarker
+                .setLatLng([
+                    latitude,
+                    longitude
+                ]);
         }
-
-        const accuracy =
-            state.lastPosition?.accuracy ||
-            10;
 
         if (!state.accuracyCircle) {
             state.accuracyCircle =
                 L.circle(
-                    [latitude, longitude],
+                    [
+                        latitude,
+                        longitude
+                    ],
                     {
-                        radius: accuracy,
-                        color: "#29d8ff",
-                        weight: 1,
-                        opacity: .35,
-                        fillColor: "#29d8ff",
-                        fillOpacity: .05,
-                        interactive: false
+                        radius:
+                            state.lastPosition?.accuracy ||
+                            10,
+                        color:
+                            "#36c8d8",
+                        weight:
+                            1,
+                        opacity:
+                            .3,
+                        fillColor:
+                            "#36c8d8",
+                        fillOpacity:
+                            .04,
+                        interactive:
+                            false
                     }
-                ).addTo(state.map);
-        } else {
-            state.accuracyCircle.setLatLng(
-                [latitude, longitude]
-            );
-
-            state.accuracyCircle.setRadius(
-                accuracy
-            );
-        }
-    }
-
-    function parseSpeedLimit(value) {
-        if (
-            value === null ||
-            value === undefined
-        ) {
-            return null;
-        }
-
-        const match =
-            String(value).match(
-                /(\d+(?:\.\d+)?)/
-            );
-
-        return match
-            ? Number(match[1])
-            : null;
-    }
-
-    function normalizeRadarData(elements) {
-        const result = [];
-
-        for (const element of elements) {
-            let latitude = null;
-            let longitude = null;
-
-            if (
-                Number.isFinite(
-                    Number(element.lat)
-                ) &&
-                Number.isFinite(
-                    Number(element.lon)
                 )
-            ) {
-                latitude =
-                    Number(element.lat);
+                    .addTo(
+                        state.map
+                    );
+        } else {
+            state.accuracyCircle
+                .setLatLng([
+                    latitude,
+                    longitude
+                ]);
 
-                longitude =
-                    Number(element.lon);
-            } else if (element.center) {
-                latitude =
-                    Number(element.center.lat);
+            state.accuracyCircle
+                .setRadius(
+                    state.lastPosition?.accuracy ||
+                    10
+                );
+        }
 
-                longitude =
-                    Number(element.center.lon);
-            }
+        updateUserHeadingVisual();
+    }
+
+    function updateUserHeadingVisual() {
+        const element =
+            document.querySelector(
+                ".user-marker"
+            );
+
+        if (!element) {
+            return;
+        }
+
+        const heading =
+            state.orientation.heading ??
+            state.simulation.heading ??
+            state.lastPosition?.heading ??
+            0;
+
+        element.style.transform =
+            `rotate(${heading}deg)`;
+    }
+
+    function getCurrentHeading() {
+        return normalizeHeading(
+            state.orientation.heading ??
+            state.simulation.heading ??
+            state.lastPosition?.heading ??
+            0
+        );
+    }
+
+    function isAhead(
+        latitude,
+        longitude,
+        targetLatitude,
+        targetLongitude,
+        maxAngle
+    ) {
+        const heading =
+            getCurrentHeading();
+
+        const bearing =
+            bearingBetween(
+                latitude,
+                longitude,
+                targetLatitude,
+                targetLongitude
+            );
+
+        return (
+            angleDifference(
+                heading,
+                bearing
+            ) <= maxAngle
+        );
+    }
+
+    function findDirectionalObject(
+        latitude,
+        longitude,
+        objects,
+        maxDistance,
+        maxAngle,
+        maxRoadDistance
+    ) {
+        let closest = null;
+
+        for (const object of objects) {
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    object.latitude,
+                    object.longitude
+                );
 
             if (
-                !Number.isFinite(latitude) ||
-                !Number.isFinite(longitude)
+                distance >
+                maxDistance
             ) {
                 continue;
             }
 
-            const tags =
-                element.tags || {};
+            if (
+                !isAhead(
+                    latitude,
+                    longitude,
+                    object.latitude,
+                    object.longitude,
+                    maxAngle
+                )
+            ) {
+                continue;
+            }
 
-            const limit =
-                parseSpeedLimit(
-                    tags.maxspeed ||
-                    tags.maxspeed_forward ||
-                    tags.maxspeed_backward
-                );
+            if (
+                maxRoadDistance &&
+                object.roadDistance &&
+                object.roadDistance >
+                    maxRoadDistance
+            ) {
+                continue;
+            }
 
-            result.push({
-                id:
-                    String(
-                        element.id ??
-                        `${latitude}:${longitude}`
-                    ),
-
-                latitude,
-                longitude,
-                limit,
-
-                direction:
-                    tags.direction ||
-                    null,
-
-                name:
-                    tags.name ||
-                    "RADAR DE VELOCIDAD",
-
-                source:
-                    "OpenStreetMap"
-            });
-        }
-
-        return result;
-    }
-
-    function deduplicateRadars(radars) {
-        const unique = [];
-
-        for (const radar of radars) {
-            const exists =
-                unique.some(
-                    item =>
-                        distanceMeters(
-                            item.latitude,
-                            item.longitude,
-                            radar.latitude,
-                            radar.longitude
-                        ) < 20
-                );
-
-            if (!exists) {
-                unique.push(radar);
+            if (
+                !closest ||
+                distance <
+                    closest.distance
+            ) {
+                closest = {
+                    object,
+                    distance
+                };
             }
         }
 
-        return unique;
+        return closest;
     }
 
     async function loadRadars(
         latitude,
-        longitude,
-        force = false
+        longitude
     ) {
         if (
             !Number.isFinite(latitude) ||
@@ -845,17 +814,18 @@
             return;
         }
 
-        const now = Date.now();
-
         if (
-            !force &&
-            state.lastRadarQuery &&
-            now - state.lastRadarQuery < 30000
+            Date.now() -
+            state.lastRadarQuery <
+            30000
         ) {
             return;
         }
 
-        state.lastRadarQuery = now;
+        state.lastRadarQuery =
+            Date.now();
+
+        showStatus("CARGANDO RADARES...");
 
         const radius =
             CONFIG.radar.queryRadius;
@@ -876,20 +846,23 @@ out center tags;
                 await fetch(
                     CONFIG.services.overpass,
                     {
-                        method: "POST",
+                        method:
+                            "POST",
                         headers: {
                             "Content-Type":
                                 "application/x-www-form-urlencoded"
                         },
                         body:
                             "data=" +
-                            encodeURIComponent(query)
+                            encodeURIComponent(
+                                query
+                            )
                     }
                 );
 
             if (!response.ok) {
                 throw new Error(
-                    `Overpass HTTP ${response.status}`
+                    `HTTP ${response.status}`
                 );
             }
 
@@ -907,16 +880,136 @@ out center tags;
                 state.radars.length;
 
             renderRadars();
-        } catch (error) {
-            console.error(
-                "[Radar]",
-                error
-            );
 
+            showStatus(
+                `RADARES · ${state.radarCount}`
+            );
+        } catch (error) {
+            console.error(error);
             showStatus(
                 "ERROR CARGANDO RADARES"
             );
         }
+    }
+
+    function normalizeRadarData(
+        elements
+    ) {
+        const result = [];
+
+        for (const element of elements) {
+            let latitude = null;
+            let longitude = null;
+
+            if (
+                Number.isFinite(
+                    Number(element.lat)
+                ) &&
+                Number.isFinite(
+                    Number(element.lon)
+                )
+            ) {
+                latitude =
+                    Number(element.lat);
+                longitude =
+                    Number(element.lon);
+            } else if (
+                element.center
+            ) {
+                latitude =
+                    Number(
+                        element.center.lat
+                    );
+                longitude =
+                    Number(
+                        element.center.lon
+                    );
+            }
+
+            if (
+                !Number.isFinite(latitude) ||
+                !Number.isFinite(longitude)
+            ) {
+                continue;
+            }
+
+            const tags =
+                element.tags || {};
+
+            const limit =
+                parseSpeedLimit(
+                    tags.maxspeed ||
+                    tags.maxspeed_forward ||
+                    tags.maxspeed_backward ||
+                    null
+                );
+
+            result.push({
+                id:
+                    String(
+                        element.id ??
+                        `${latitude}:${longitude}`
+                    ),
+                latitude,
+                longitude,
+                limit,
+                direction:
+                    tags.direction ||
+                    null,
+                name:
+                    tags.name ||
+                    "RADAR DE VELOCIDAD",
+                source:
+                    "OpenStreetMap"
+            });
+        }
+
+        return result;
+    }
+
+    function parseSpeedLimit(
+        value
+    ) {
+        if (
+            value === null ||
+            value === undefined
+        ) {
+            return null;
+        }
+
+        const match =
+            String(value).match(
+                /(\d+(?:\.\d+)?)/
+            );
+
+        return match
+            ? Number(match[1])
+            : null;
+    }
+
+    function deduplicateRadars(
+        radars
+    ) {
+        const unique = [];
+
+        for (const radar of radars) {
+            const exists =
+                unique.some(
+                    item =>
+                        distanceMeters(
+                            item.latitude,
+                            item.longitude,
+                            radar.latitude,
+                            radar.longitude
+                        ) < 20
+                );
+
+            if (!exists) {
+                unique.push(radar);
+            }
+        }
+
+        return unique;
     }
 
     function renderRadars() {
@@ -948,11 +1041,7 @@ out center tags;
                         : "LÍMITE NO DISPONIBLE";
 
                 marker.bindPopup(`
-                    <div style="
-                        font-family:Arial,sans-serif;
-                        min-width:180px;
-                        color:#111;
-                    ">
+                    <div class="map-popup">
                         <strong>RADAR DE VELOCIDAD</strong>
                         <br>
                         LÍMITE: ${limitText}
@@ -968,14 +1057,623 @@ out center tags;
         );
     }
 
+    async function fetchOfficialCameraPage() {
+        const direct =
+            CONFIG.camera.source;
+
+        try {
+            const response =
+                await fetch(
+                    direct,
+                    {
+                        method: "GET",
+                        cache: "no-store"
+                    }
+                );
+
+            if (
+                response.ok
+            ) {
+                return await response.text();
+            }
+        } catch (error) {
+        }
+
+        const proxy =
+            CONFIG.camera.proxy +
+            encodeURIComponent(
+                direct
+            );
+
+        const response =
+            await fetch(
+                proxy,
+                {
+                    method: "GET",
+                    cache: "no-store"
+                }
+            );
+
+        if (!response.ok) {
+            throw new Error(
+                `CAMERA HTTP ${response.status}`
+            );
+        }
+
+        return await response.text();
+    }
+
+    function cleanCameraText(
+        text
+    ) {
+        return String(text)
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .replace(
+                /[\u00a0\u2007\u202f]/g,
+                " "
+            )
+            .trim();
+    }
+
+    function extractCameraLocations(
+        html
+    ) {
+        const documentObject =
+            new DOMParser()
+                .parseFromString(
+                    html,
+                    "text/html"
+                );
+
+        const candidates =
+            Array.from(
+                documentObject.querySelectorAll(
+                    "li"
+                )
+            );
+
+        const result = [];
+
+        const seen =
+            new Set();
+
+        for (
+            const element
+            of candidates
+        ) {
+            const text =
+                cleanCameraText(
+                    element.textContent
+                );
+
+            if (
+                !text ||
+                text.length < 8 ||
+                text.length > 180
+            ) {
+                continue;
+            }
+
+            const normalized =
+                text
+                    .toLowerCase()
+                    .normalize(
+                        "NFD"
+                    )
+                    .replace(
+                        /[\u0300-\u036f]/g,
+                        ""
+                    );
+
+            if (
+                !normalized.includes(
+                    " y "
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                normalized.includes(
+                    "para solicitar"
+                ) ||
+                normalized.includes(
+                    "derecho a"
+                ) ||
+                normalized.includes(
+                    "lunes"
+                ) ||
+                normalized.includes(
+                    "telefono"
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                seen.has(
+                    normalized
+                )
+            ) {
+                continue;
+            }
+
+            seen.add(
+                normalized
+            );
+
+            result.push(text);
+        }
+
+        return result;
+    }
+
+    function normalizeCameraName(
+        text
+    ) {
+        return text
+            .replace(
+                /\s*\.\s*$/,
+                ""
+            )
+            .replace(
+                /\s+/g,
+                " "
+            )
+            .trim();
+    }
+
+    async function geocodeCamera(
+        text
+    ) {
+        const cacheKey =
+            "traffic-camera:" +
+            text
+                .toLowerCase()
+                .trim();
+
+        try {
+            const cached =
+                localStorage.getItem(
+                    cacheKey
+                );
+
+            if (cached) {
+                const value =
+                    JSON.parse(
+                        cached
+                    );
+
+                if (
+                    Number.isFinite(
+                        value.latitude
+                    ) &&
+                    Number.isFinite(
+                        value.longitude
+                    )
+                ) {
+                    return value;
+                }
+            }
+        } catch (error) {
+        }
+
+        const query =
+            `${text}, Montevideo, Uruguay`;
+
+        const url =
+            CONFIG.services.nominatim +
+            "?format=jsonv2" +
+            "&limit=1" +
+            "&countrycodes=uy" +
+            "&q=" +
+            encodeURIComponent(
+                query
+            );
+
+        try {
+            const response =
+                await fetch(
+                    url,
+                    {
+                        headers: {
+                            Accept:
+                                "application/json"
+                        }
+                    }
+                );
+
+            if (!response.ok) {
+                return null;
+            }
+
+            const data =
+                await response.json();
+
+            const item =
+                data?.[0];
+
+            if (!item) {
+                return null;
+            }
+
+            const result = {
+                latitude:
+                    Number(item.lat),
+                longitude:
+                    Number(item.lon)
+            };
+
+            if (
+                !Number.isFinite(
+                    result.latitude
+                ) ||
+                !Number.isFinite(
+                    result.longitude
+                )
+            ) {
+                return null;
+            }
+
+            try {
+                localStorage.setItem(
+                    cacheKey,
+                    JSON.stringify(
+                        result
+                    )
+                );
+            } catch (error) {
+            }
+
+            return result;
+        } catch (error) {
+            return null;
+        }
+    }
+
+    async function loadOfficialCameras() {
+        showStatus(
+            "CARGANDO CÁMARAS OFICIALES..."
+        );
+
+        try {
+            const html =
+                await fetchOfficialCameraPage();
+
+            const locations =
+                extractCameraLocations(
+                    html
+                );
+
+            if (!locations.length) {
+                throw new Error(
+                    "NO CAMERA LOCATIONS"
+                );
+            }
+
+            const cameras = [];
+
+            for (
+                let i = 0;
+                i < locations.length;
+                i++
+            ) {
+                const name =
+                    normalizeCameraName(
+                        locations[i]
+                    );
+
+                const cached =
+                    await geocodeCamera(
+                        name
+                    );
+
+                if (
+                    cached &&
+                    Number.isFinite(
+                        cached.latitude
+                    ) &&
+                    Number.isFinite(
+                        cached.longitude
+                    )
+                ) {
+                    cameras.push({
+                        id:
+                            `imm-${i}-${name}`,
+                        name,
+                        latitude:
+                            cached.latitude,
+                        longitude:
+                            cached.longitude,
+                        source:
+                            CONFIG.camera.source
+                    });
+                }
+
+                if (
+                    i % 5 === 0
+                ) {
+                    showStatus(
+                        `CÁMARAS · ${cameras.length}/${locations.length}`
+                    );
+                }
+
+                await new Promise(
+                    resolve =>
+                        setTimeout(
+                            resolve,
+                            350
+                        )
+                );
+            }
+
+            state.cameras =
+                deduplicateCameras(
+                    cameras
+                );
+
+            state.cameraCount =
+                state.cameras.length;
+
+            renderCameras();
+
+            showStatus(
+                `CÁMARAS OFICIALES · ${state.cameraCount}`
+            );
+        } catch (error) {
+            console.error(
+                "[Cameras]",
+                error
+            );
+
+            showStatus(
+                "ERROR CARGANDO CÁMARAS"
+            );
+        }
+    }
+
+    function deduplicateCameras(
+        cameras
+    ) {
+        const unique = [];
+
+        for (
+            const camera
+            of cameras
+        ) {
+            const exists =
+                unique.some(
+                    item =>
+                        distanceMeters(
+                            item.latitude,
+                            item.longitude,
+                            camera.latitude,
+                            camera.longitude
+                        ) < 25
+                );
+
+            if (!exists) {
+                unique.push(
+                    camera
+                );
+            }
+        }
+
+        return unique;
+    }
+
+    function renderCameras() {
+        if (!state.cameraLayer) {
+            return;
+        }
+
+        state.cameraLayer.clearLayers();
+
+        state.cameras.forEach(
+            camera => {
+                const marker =
+                    L.marker(
+                        [
+                            camera.latitude,
+                            camera.longitude
+                        ],
+                        {
+                            icon:
+                                createCameraIcon()
+                        }
+                    );
+
+                marker.bindPopup(`
+                    <div class="map-popup">
+                        <strong>CÁMARA DE TRÁNSITO</strong>
+                        <br>
+                        ${camera.name}
+                        <br>
+                        <small>INTENDENCIA DE MONTEVIDEO</small>
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.cameraLayer
+                );
+            }
+        );
+    }
+
+    async function loadDeadEnds(
+        latitude,
+        longitude
+    ) {
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+        ) {
+            return;
+        }
+
+        if (
+            Date.now() -
+            state.lastDeadEndQuery <
+            60000
+        ) {
+            return;
+        }
+
+        state.lastDeadEndQuery =
+            Date.now();
+
+        const query = `
+[out:json][timeout:25];
+way["highway"]["noexit"="yes"](around:${CONFIG.radar.queryRadius},${latitude},${longitude});
+out center tags;
+`;
+
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.overpass,
+                    {
+                        method:
+                            "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded"
+                        },
+                        body:
+                            "data=" +
+                            encodeURIComponent(
+                                query
+                            )
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            state.deadEnds =
+                normalizeDeadEnds(
+                    data?.elements || []
+                );
+
+            state.deadEndCount =
+                state.deadEnds.length;
+
+            renderDeadEnds();
+        } catch (error) {
+            console.error(
+                "[DeadEnd]",
+                error
+            );
+        }
+    }
+
+    function normalizeDeadEnds(
+        elements
+    ) {
+        const result = [];
+
+        for (
+            const element
+            of elements
+        ) {
+            if (
+                !element.center
+            ) {
+                continue;
+            }
+
+            const latitude =
+                Number(
+                    element.center.lat
+                );
+
+            const longitude =
+                Number(
+                    element.center.lon
+                );
+
+            if (
+                !Number.isFinite(
+                    latitude
+                ) ||
+                !Number.isFinite(
+                    longitude
+                )
+            ) {
+                continue;
+            }
+
+            result.push({
+                id:
+                    String(
+                        element.id
+                    ),
+                latitude,
+                longitude,
+                name:
+                    element.tags?.name ||
+                    "CALLE SIN SALIDA"
+            });
+        }
+
+        return result;
+    }
+
+    function renderDeadEnds() {
+        if (!state.deadEndLayer) {
+            return;
+        }
+
+        state.deadEndLayer.clearLayers();
+
+        state.deadEnds.forEach(
+            deadEnd => {
+                const marker =
+                    L.marker(
+                        [
+                            deadEnd.latitude,
+                            deadEnd.longitude
+                        ],
+                        {
+                            icon:
+                                createDeadEndIcon()
+                        }
+                    );
+
+                marker.bindPopup(`
+                    <div class="map-popup">
+                        <strong>CALLE SIN SALIDA</strong>
+                        <br>
+                        ${deadEnd.name}
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.deadEndLayer
+                );
+            }
+        );
+    }
+
     function findClosestRadar(
         latitude,
-        longitude,
-        heading
+        longitude
     ) {
         let closest = null;
 
-        for (const radar of state.radars) {
+        for (
+            const radar
+            of state.radars
+        ) {
             const distance =
                 distanceMeters(
                     latitude,
@@ -985,28 +1683,9 @@ out center tags;
                 );
 
             if (
-                distance >
-                CONFIG.radar.warningDistance
-            ) {
-                continue;
-            }
-
-            if (
-                !isAhead(
-                    latitude,
-                    longitude,
-                    radar.latitude,
-                    radar.longitude,
-                    heading,
-                    CONFIG.radar.directionAngle
-                )
-            ) {
-                continue;
-            }
-
-            if (
                 !closest ||
-                distance < closest.distance
+                distance <
+                    closest.distance
             ) {
                 closest = {
                     radar,
@@ -1018,49 +1697,404 @@ out center tags;
         return closest;
     }
 
-    function getDeviceHeading(event) {
+    function findDirectionalRadar(
+        latitude,
+        longitude
+    ) {
+        return findDirectionalObject(
+            latitude,
+            longitude,
+            state.radars,
+            CONFIG.radar.warningDistance,
+            CONFIG.radar.directionAngle,
+            CONFIG.radar.roadDistance
+        );
+    }
+
+    function findDirectionalCamera(
+        latitude,
+        longitude
+    ) {
+        return findDirectionalObject(
+            latitude,
+            longitude,
+            state.cameras,
+            CONFIG.camera.warningDistance,
+            CONFIG.camera.directionAngle,
+            CONFIG.camera.roadDistance
+        );
+    }
+
+    function findDirectionalDeadEnd(
+        latitude,
+        longitude
+    ) {
+        return findDirectionalObject(
+            latitude,
+            longitude,
+            state.deadEnds,
+            CONFIG.deadEnd.warningDistance,
+            CONFIG.deadEnd.directionAngle,
+            null
+        );
+    }
+
+    function speakOnce(
+        type,
+        id,
+        text
+    ) {
         if (
-            typeof event.webkitCompassHeading ===
-            "number"
+            !state.alerts.voice
         ) {
-            return normalizeHeading(
-                event.webkitCompassHeading
-            );
+            return;
         }
 
         if (
-            typeof event.alpha !==
-            "number"
+            state.announced[type] ===
+            id
+        ) {
+            return;
+        }
+
+        state.announced[type] =
+            id;
+
+        if (
+            !("speechSynthesis" in window)
+        ) {
+            return;
+        }
+
+        const now =
+            Date.now();
+
+        if (
+            now -
+                state.lastSpeech <
+            1200
+        ) {
+            return;
+        }
+
+        state.lastSpeech =
+            now;
+
+        try {
+            window.speechSynthesis
+                .cancel();
+
+            const utterance =
+                new SpeechSynthesisUtterance(
+                    text
+                );
+
+            utterance.lang =
+                "es-UY";
+
+            utterance.rate =
+                1;
+
+            utterance.pitch =
+                1;
+
+            window.speechSynthesis
+                .speak(
+                    utterance
+                );
+        } catch (error) {
+            console.error(
+                error
+            );
+        }
+    }
+
+    function checkRadar(
+        latitude,
+        longitude
+    ) {
+        if (
+            !state.alerts.radar
         ) {
             return null;
         }
 
-        return normalizeHeading(
-            360 - event.alpha
+        const result =
+            findDirectionalRadar(
+                latitude,
+                longitude
+            );
+
+        if (
+            !result
+        ) {
+            state.announced.radar =
+                null;
+            return null;
+        }
+
+        const radar =
+            result.object;
+
+        const id =
+            String(radar.id);
+
+        const distance =
+            Math.round(
+                result.distance
+            );
+
+        const text =
+            radar.limit
+                ? `Radar a ${distance} metros. Límite ${radar.limit} kilómetros por hora.`
+                : `Radar a ${distance} metros.`;
+
+        speakOnce(
+            "radar",
+            id,
+            text
         );
+
+        return result;
     }
 
-    function handleDeviceOrientation(event) {
-        const heading =
-            getDeviceHeading(event);
+    function checkCamera(
+        latitude,
+        longitude
+    ) {
+        if (
+            !state.alerts.camera
+        ) {
+            return null;
+        }
 
-        if (heading === null) {
+        const result =
+            findDirectionalCamera(
+                latitude,
+                longitude
+            );
+
+        if (
+            !result
+        ) {
+            state.announced.camera =
+                null;
+            return null;
+        }
+
+        const camera =
+            result.object;
+
+        const id =
+            String(camera.id);
+
+        const distance =
+            Math.round(
+                result.distance
+            );
+
+        speakOnce(
+            "camera",
+            id,
+            `Cámara de tránsito a ${distance} metros.`
+        );
+
+        return result;
+    }
+
+    function checkDeadEnd(
+        latitude,
+        longitude
+    ) {
+        if (
+            !state.alerts.deadEnd
+        ) {
+            return null;
+        }
+
+        const result =
+            findDirectionalDeadEnd(
+                latitude,
+                longitude
+            );
+
+        if (
+            !result
+        ) {
+            state.announced.deadEnd =
+                null;
+            return null;
+        }
+
+        const deadEnd =
+            result.object;
+
+        const id =
+            String(deadEnd.id);
+
+        const distance =
+            Math.round(
+                result.distance
+            );
+
+        speakOnce(
+            "deadEnd",
+            id,
+            `Atención. Calle sin salida en ${distance} metros.`
+        );
+
+        return result;
+    }
+
+    function checkAllAlerts(
+        latitude,
+        longitude,
+        heading
+    ) {
+        const radar =
+            checkRadar(
+                latitude,
+                longitude
+            );
+
+        const camera =
+            checkCamera(
+                latitude,
+                longitude
+            );
+
+        const deadEnd =
+            checkDeadEnd(
+                latitude,
+                longitude
+            );
+
+        updateWarningHUD(
+            radar,
+            camera,
+            deadEnd,
+            heading
+        );
+
+        return {
+            radar,
+            camera,
+            deadEnd
+        };
+    }
+
+    function updateWarningHUD(
+        radar,
+        camera,
+        deadEnd
+    ) {
+        const warning =
+            byId(
+                "radarWarning"
+            );
+
+        if (!warning) {
             return;
         }
 
-        state.orientation.heading =
-            heading;
+        const distanceElement =
+            byId(
+                "radarWarningDistance"
+            );
 
-        state.orientation.active =
-            true;
+        const limitElement =
+            byId(
+                "radarWarningLimit"
+            );
 
-        if (state.simulation.active) {
-            state.simulation.heading =
-                heading;
+        if (
+            radar &&
+            state.alerts.radar
+        ) {
+            warning.classList
+                .add("active");
 
-            updateOrientationUI();
-            updateSimulationUI();
+            warning.dataset.type =
+                "radar";
+
+            if (distanceElement) {
+                distanceElement.textContent =
+                    `${Math.max(
+                        1,
+                        Math.round(
+                            radar.distance
+                        )
+                    )} M`;
+            }
+
+            if (limitElement) {
+                limitElement.textContent =
+                    radar.object.limit
+                        ? `RADAR · ${radar.object.limit} KM/H`
+                        : "RADAR";
+            }
+
+            return;
         }
+
+        if (
+            camera &&
+            state.alerts.camera
+        ) {
+            warning.classList
+                .add("active");
+
+            warning.dataset.type =
+                "camera";
+
+            if (distanceElement) {
+                distanceElement.textContent =
+                    `${Math.max(
+                        1,
+                        Math.round(
+                            camera.distance
+                        )
+                    )} M`;
+            }
+
+            if (limitElement) {
+                limitElement.textContent =
+                    "CÁMARA DE TRÁNSITO";
+            }
+
+            return;
+        }
+
+        if (
+            deadEnd &&
+            state.alerts.deadEnd
+        ) {
+            warning.classList
+                .add("active");
+
+            warning.dataset.type =
+                "deadend";
+
+            if (distanceElement) {
+                distanceElement.textContent =
+                    `${Math.max(
+                        1,
+                        Math.round(
+                            deadEnd.distance
+                        )
+                    )} M`;
+            }
+
+            if (limitElement) {
+                limitElement.textContent =
+                    "CALLE SIN SALIDA";
+            }
+
+            return;
+        }
+
+        warning.classList
+            .remove("active");
     }
 
     async function enableDeviceOrientation() {
@@ -1072,7 +2106,8 @@ out center tags;
                 "function"
             ) {
                 const permission =
-                    await DeviceOrientationEvent.requestPermission();
+                    await DeviceOrientationEvent
+                        .requestPermission();
 
                 if (
                     permission !==
@@ -1114,12 +2149,13 @@ out center tags;
             state.orientation.active =
                 true;
 
-            updateOrientationUI();
+            showStatus(
+                "GIROSCOPIO ACTIVO"
+            );
 
             return true;
         } catch (error) {
             console.error(
-                "[Orientation]",
                 error
             );
 
@@ -1134,798 +2170,61 @@ out center tags;
         }
     }
 
-    function updateOrientationUI() {
+    function getDeviceHeading(
+        event
+    ) {
+        if (
+            typeof event.webkitCompassHeading ===
+            "number"
+        ) {
+            return normalizeHeading(
+                event.webkitCompassHeading
+            );
+        }
+
+        if (
+            typeof event.alpha !==
+            "number"
+        ) {
+            return null;
+        }
+
+        return normalizeHeading(
+            360 -
+            event.alpha
+        );
+    }
+
+    function handleDeviceOrientation(
+        event
+    ) {
         const heading =
-            state.orientation.heading;
-
-        if (heading === null) {
-            return;
-        }
-
-        setText(
-            "headingValue",
-            `${Math.round(heading)}°`
-        );
-    }
-
-    function speakOnce(
-        type,
-        id,
-        text
-    ) {
-        if (!state.speechEnabled) {
-            return;
-        }
+            getDeviceHeading(
+                event
+            );
 
         if (
-            state.announced[type] ===
-            id
+            heading === null
         ) {
             return;
         }
 
-        state.announced[type] = id;
+        state.orientation.heading =
+            heading;
+
+        state.orientation.active =
+            true;
 
         if (
-            !("speechSynthesis" in window)
+            state.simulation.active
         ) {
-            return;
+            state.simulation.heading =
+                heading;
+
+            updateUserHeadingVisual();
+
+            updateSimulationUI();
         }
-
-        try {
-            window.speechSynthesis.cancel();
-
-            const utterance =
-                new SpeechSynthesisUtterance(
-                    text
-                );
-
-            utterance.lang = "es-UY";
-            utterance.rate = 1;
-            utterance.pitch = 1;
-
-            window.speechSynthesis.speak(
-                utterance
-            );
-        } catch (error) {
-            console.warn(
-                "[Speech]",
-                error
-            );
-        }
-    }
-
-    function showRadarWarning(
-        radar,
-        distance
-    ) {
-        const warning =
-            byId("radarWarning");
-
-        if (!warning) {
-            return;
-        }
-
-        const distanceElement =
-            byId("radarWarningDistance");
-
-        const limitElement =
-            byId("radarWarningLimit");
-
-        const rounded =
-            Math.max(
-                1,
-                Math.round(distance)
-            );
-
-        if (distanceElement) {
-            distanceElement.textContent =
-                `${rounded} M`;
-        }
-
-        if (limitElement) {
-            limitElement.textContent =
-                radar.limit
-                    ? `LÍMITE ${radar.limit} KM/H`
-                    : "RADAR";
-        }
-
-        warning.classList.add(
-            "active"
-        );
-
-        if (
-            state.radarAlertEnabled
-        ) {
-            speakOnce(
-                "radar",
-                String(radar.id),
-                radar.limit
-                    ? `Radar a ${rounded} metros. Límite ${radar.limit} kilómetros por hora.`
-                    : `Radar a ${rounded} metros.`
-            );
-        }
-    }
-
-    function showCameraWarning(
-        camera,
-        distance
-    ) {
-        const warning =
-            byId("cameraWarning");
-
-        if (!warning) {
-            return;
-        }
-
-        const distanceElement =
-            byId("cameraWarningDistance");
-
-        const rounded =
-            Math.max(
-                1,
-                Math.round(distance)
-            );
-
-        if (distanceElement) {
-            distanceElement.textContent =
-                `${rounded} M`;
-        }
-
-        warning.classList.add(
-            "active"
-        );
-
-        if (
-            state.cameraAlertEnabled
-        ) {
-            speakOnce(
-                "camera",
-                String(camera.id),
-                `Cámara de tránsito a ${rounded} metros.`
-            );
-        }
-    }
-
-    function showDeadEndWarning(
-        deadEnd,
-        distance
-    ) {
-        const warning =
-            byId("deadEndWarning");
-
-        if (!warning) {
-            return;
-        }
-
-        const distanceElement =
-            byId("deadEndWarningDistance");
-
-        const rounded =
-            Math.max(
-                1,
-                Math.round(distance)
-            );
-
-        if (distanceElement) {
-            distanceElement.textContent =
-                `${rounded} M`;
-        }
-
-        warning.classList.add(
-            "active"
-        );
-
-        if (
-            state.deadEndAlertEnabled
-        ) {
-            speakOnce(
-                "deadEnd",
-                String(deadEnd.id),
-                `Atención. Calle sin salida en ${rounded} metros.`
-            );
-        }
-    }
-
-    function hideRadarWarning() {
-        const warning =
-            byId("radarWarning");
-
-        if (warning) {
-            warning.classList.remove(
-                "active"
-            );
-        }
-
-        state.warningRadar = null;
-    }
-
-    function hideCameraWarning() {
-        const warning =
-            byId("cameraWarning");
-
-        if (warning) {
-            warning.classList.remove(
-                "active"
-            );
-        }
-
-        state.warningCamera = null;
-    }
-
-    function hideDeadEndWarning() {
-        const warning =
-            byId("deadEndWarning");
-
-        if (warning) {
-            warning.classList.remove(
-                "active"
-            );
-        }
-
-        state.warningDeadEnd = null;
-    }
-
-    function findClosestCamera(
-        latitude,
-        longitude,
-        heading
-    ) {
-        let closest = null;
-
-        for (const camera of state.cameras) {
-            const distance =
-                distanceMeters(
-                    latitude,
-                    longitude,
-                    camera.latitude,
-                    camera.longitude
-                );
-
-            if (
-                distance >
-                CONFIG.camera.warningDistance
-            ) {
-                continue;
-            }
-
-            if (
-                !isAhead(
-                    latitude,
-                    longitude,
-                    camera.latitude,
-                    camera.longitude,
-                    heading,
-                    CONFIG.camera.directionAngle
-                )
-            ) {
-                continue;
-            }
-
-            if (
-                !closest ||
-                distance < closest.distance
-            ) {
-                closest = {
-                    camera,
-                    distance
-                };
-            }
-        }
-
-        return closest;
-    }
-
-    function findClosestDeadEnd(
-        latitude,
-        longitude,
-        heading
-    ) {
-        let closest = null;
-
-        for (const deadEnd of state.deadEnds) {
-            const distance =
-                distanceMeters(
-                    latitude,
-                    longitude,
-                    deadEnd.latitude,
-                    deadEnd.longitude
-                );
-
-            if (
-                distance >
-                CONFIG.deadEnd.warningDistance
-            ) {
-                continue;
-            }
-
-            if (
-                !isAhead(
-                    latitude,
-                    longitude,
-                    deadEnd.latitude,
-                    deadEnd.longitude,
-                    heading,
-                    CONFIG.deadEnd.directionAngle
-                )
-            ) {
-                continue;
-            }
-
-            if (
-                !closest ||
-                distance < closest.distance
-            ) {
-                closest = {
-                    deadEnd,
-                    distance
-                };
-            }
-        }
-
-        return closest;
-    }
-
-    function checkAllAlerts(
-        latitude,
-        longitude,
-        heading
-    ) {
-        const radar =
-            findClosestRadar(
-                latitude,
-                longitude,
-                heading
-            );
-
-        if (radar) {
-            state.warningRadar =
-                radar.radar;
-
-            showRadarWarning(
-                radar.radar,
-                radar.distance
-            );
-        } else {
-            hideRadarWarning();
-
-            state.announced.radar =
-                null;
-        }
-
-        const camera =
-            findClosestCamera(
-                latitude,
-                longitude,
-                heading
-            );
-
-        if (camera) {
-            state.warningCamera =
-                camera.camera;
-
-            showCameraWarning(
-                camera.camera,
-                camera.distance
-            );
-        } else {
-            hideCameraWarning();
-
-            state.announced.camera =
-                null;
-        }
-
-        const deadEnd =
-            findClosestDeadEnd(
-                latitude,
-                longitude,
-                heading
-            );
-
-        if (deadEnd) {
-            state.warningDeadEnd =
-                deadEnd.deadEnd;
-
-            showDeadEndWarning(
-                deadEnd.deadEnd,
-                deadEnd.distance
-            );
-        } else {
-            hideDeadEndWarning();
-
-            state.announced.deadEnd =
-                null;
-        }
-    }
-
-    function normalizeCameraData(items) {
-        const result = [];
-
-        for (
-            const item of items
-        ) {
-            if (
-                !item ||
-                !Number.isFinite(
-                    Number(item.latitude)
-                ) ||
-                !Number.isFinite(
-                    Number(item.longitude)
-                )
-            ) {
-                continue;
-            }
-
-            result.push({
-                id:
-                    String(
-                        item.id ??
-                        `${item.latitude}:${item.longitude}`
-                    ),
-
-                latitude:
-                    Number(item.latitude),
-
-                longitude:
-                    Number(item.longitude),
-
-                name:
-                    item.name ||
-                    "CÁMARA DE TRÁNSITO",
-
-                source:
-                    "Intendencia de Montevideo"
-            });
-        }
-
-        return result;
-    }
-
-    function extractCoordinatesFromText(
-        text
-    ) {
-        const results = [];
-        const regex =
-            /(-?\d{1,3}\.\d+)\s*[,;]\s*(-?\d{1,3}\.\d+)/g;
-
-        let match;
-
-        while (
-            (match = regex.exec(text))
-        ) {
-            const latitude =
-                Number(match[1]);
-
-            const longitude =
-                Number(match[2]);
-
-            if (
-                latitude >= -35.2 &&
-                latitude <= -34.5 &&
-                longitude >= -56.7 &&
-                longitude <= -55.7
-            ) {
-                results.push({
-                    latitude,
-                    longitude
-                });
-            }
-        }
-
-        return results;
-    }
-
-    async function loadOfficialCameras(
-        force = false
-    ) {
-        const now = Date.now();
-
-        if (
-            !force &&
-            state.lastCameraQuery &&
-            now - state.lastCameraQuery <
-                60000
-        ) {
-            return;
-        }
-
-        state.lastCameraQuery = now;
-
-        try {
-            const response =
-                await fetch(
-                    CONFIG.services.cameraPage,
-                    {
-                        method: "GET",
-                        cache: "no-store"
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `HTTP ${response.status}`
-                );
-            }
-
-            const html =
-                await response.text();
-
-            const parser =
-                new DOMParser();
-
-            const document =
-                parser.parseFromString(
-                    html,
-                    "text/html"
-                );
-
-            const text =
-                document.body?.innerText ||
-                "";
-
-            const coordinates =
-                extractCoordinatesFromText(
-                    text
-                );
-
-            if (
-                coordinates.length
-            ) {
-                state.cameras =
-                    normalizeCameraData(
-                        coordinates.map(
-                            (item, index) => ({
-                                ...item,
-                                id:
-                                    `imm-${index + 1}`
-                            })
-                        )
-                    );
-
-                state.cameraCount =
-                    state.cameras.length;
-
-                renderCameras();
-            }
-        } catch (error) {
-            console.warn(
-                "[Cameras]",
-                error
-            );
-        }
-    }
-
-    function renderCameras() {
-        if (!state.cameraLayer) {
-            return;
-        }
-
-        state.cameraLayer.clearLayers();
-
-        state.cameras.forEach(
-            camera => {
-                const marker =
-                    L.marker(
-                        [
-                            camera.latitude,
-                            camera.longitude
-                        ],
-                        {
-                            icon:
-                                createCameraIcon()
-                        }
-                    );
-
-                marker.bindPopup(`
-                    <div style="
-                        font-family:Arial,sans-serif;
-                        min-width:180px;
-                        color:#111;
-                    ">
-                        <strong>CÁMARA DE TRÁNSITO</strong>
-                        <br>
-                        FUENTE: INTENDENCIA DE MONTEVIDEO
-                    </div>
-                `);
-
-                marker.addTo(
-                    state.cameraLayer
-                );
-            }
-        );
-    }
-
-    async function loadDeadEnds(
-        latitude,
-        longitude,
-        force = false
-    ) {
-        const now = Date.now();
-
-        if (
-            !force &&
-            state.lastDeadEndQuery &&
-            now - state.lastDeadEndQuery <
-                60000
-        ) {
-            return;
-        }
-
-        state.lastDeadEndQuery = now;
-
-        const radius = 50000;
-
-        const query = `
-[out:json][timeout:30];
-(
-  node["noexit"="yes"](around:${radius},${latitude},${longitude});
-  way["noexit"="yes"](around:${radius},${latitude},${longitude});
-);
-out center tags;
-`;
-
-        try {
-            const response =
-                await fetch(
-                    CONFIG.services.overpass,
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type":
-                                "application/x-www-form-urlencoded"
-                        },
-                        body:
-                            "data=" +
-                            encodeURIComponent(query)
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `Overpass HTTP ${response.status}`
-                );
-            }
-
-            const data =
-                await response.json();
-
-            const result = [];
-
-            for (
-                const element of
-                data?.elements || []
-            ) {
-                let latitude = null;
-                let longitude = null;
-
-                if (
-                    Number.isFinite(
-                        Number(element.lat)
-                    ) &&
-                    Number.isFinite(
-                        Number(element.lon)
-                    )
-                ) {
-                    latitude =
-                        Number(element.lat);
-
-                    longitude =
-                        Number(element.lon);
-                } else if (
-                    element.center
-                ) {
-                    latitude =
-                        Number(
-                            element.center.lat
-                        );
-
-                    longitude =
-                        Number(
-                            element.center.lon
-                        );
-                }
-
-                if (
-                    !Number.isFinite(latitude) ||
-                    !Number.isFinite(longitude)
-                ) {
-                    continue;
-                }
-
-                result.push({
-                    id:
-                        `dead-${element.type}-${element.id}`,
-
-                    latitude,
-                    longitude,
-
-                    name:
-                        element.tags?.name ||
-                        "CALLE SIN SALIDA"
-                });
-            }
-
-            state.deadEnds =
-                deduplicateDeadEnds(
-                    result
-                );
-
-            state.deadEndCount =
-                state.deadEnds.length;
-
-            renderDeadEnds();
-        } catch (error) {
-            console.warn(
-                "[DeadEnd]",
-                error
-            );
-        }
-    }
-
-    function deduplicateDeadEnds(
-        items
-    ) {
-        const result = [];
-
-        for (
-            const item of items
-        ) {
-            const exists =
-                result.some(
-                    existing =>
-                        distanceMeters(
-                            existing.latitude,
-                            existing.longitude,
-                            item.latitude,
-                            item.longitude
-                        ) < 30
-                );
-
-            if (!exists) {
-                result.push(item);
-            }
-        }
-
-        return result;
-    }
-
-    function renderDeadEnds() {
-        if (!state.deadEndLayer) {
-            return;
-        }
-
-        state.deadEndLayer.clearLayers();
-
-        state.deadEnds.forEach(
-            deadEnd => {
-                const marker =
-                    L.marker(
-                        [
-                            deadEnd.latitude,
-                            deadEnd.longitude
-                        ],
-                        {
-                            icon:
-                                createDeadEndIcon()
-                        }
-                    );
-
-                marker.bindPopup(`
-                    <div style="
-                        font-family:Arial,sans-serif;
-                        color:#111;
-                    ">
-                        <strong>CALLE SIN SALIDA</strong>
-                        <br>
-                        ${deadEnd.name}
-                    </div>
-                `);
-
-                marker.addTo(
-                    state.deadEndLayer
-                );
-            }
-        );
     }
 
     async function startSimulation() {
@@ -1938,8 +2237,12 @@ out center tags;
             state.lastPosition?.longitude;
 
         if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
+            !Number.isFinite(
+                latitude
+            ) ||
+            !Number.isFinite(
+                longitude
+            )
         ) {
             const center =
                 state.map
@@ -1947,7 +2250,6 @@ out center tags;
                     : {
                         lat:
                             CONFIG.map.defaultCenter[0],
-
                         lng:
                             CONFIG.map.defaultCenter[1]
                     };
@@ -2019,7 +2321,9 @@ out center tags;
         }
 
         showStatus(
-            `MODO PRUEBA · ${Math.round(heading)}°`
+            `MODO PRUEBA · ${Math.round(
+                heading
+            )}°`
         );
 
         updateSimulationUI();
@@ -2043,17 +2347,29 @@ out center tags;
         state.simulation.distance =
             null;
 
-        hideRadarWarning();
-        hideCameraWarning();
-        hideDeadEndWarning();
+        state.announced.radar =
+            null;
+
+        state.announced.camera =
+            null;
+
+        state.announced.deadEnd =
+            null;
+
+        const warning =
+            byId(
+                "radarWarning"
+            );
+
+        warning?.classList.remove(
+            "active"
+        );
 
         showStatus(
             state.locationActive
                 ? "GPS ACTIVO"
                 : "GPS OFF"
         );
-
-        return true;
     }
 
     function simulationStep() {
@@ -2106,11 +2422,30 @@ out center tags;
             simulation.longitude
         );
 
-        checkAllAlerts(
-            simulation.latitude,
-            simulation.longitude,
-            simulation.heading
-        );
+        const alerts =
+            checkAllAlerts(
+                simulation.latitude,
+                simulation.longitude,
+                simulation.heading
+            );
+
+        simulation.radar =
+            alerts.radar?.object ||
+            null;
+
+        simulation.camera =
+            alerts.camera?.object ||
+            null;
+
+        simulation.deadEnd =
+            alerts.deadEnd?.object ||
+            null;
+
+        simulation.distance =
+            alerts.radar?.distance ??
+            alerts.camera?.distance ??
+            alerts.deadEnd?.distance ??
+            null;
 
         updateSimulationUI();
 
@@ -2135,71 +2470,21 @@ out center tags;
             return;
         }
 
+        updateUserHeadingVisual();
+
         const heading =
-            state.orientation.heading ??
-            state.simulation.heading ??
-            0;
-
-        state.simulation.heading =
-            heading;
-
-        updateOrientationUI();
-
-        const radar =
-            findClosestRadar(
-                state.simulation.latitude,
-                state.simulation.longitude,
-                heading
+            Math.round(
+                state.orientation.heading ??
+                state.simulation.heading ??
+                0
             );
 
-        const camera =
-            findClosestCamera(
-                state.simulation.latitude,
-                state.simulation.longitude,
-                heading
-            );
+        const status =
+            byId("status");
 
-        const deadEnd =
-            findClosestDeadEnd(
-                state.simulation.latitude,
-                state.simulation.longitude,
-                heading
-            );
-
-        state.simulation.radar =
-            radar?.radar || null;
-
-        state.simulation.camera =
-            camera?.camera || null;
-
-        state.simulation.deadEnd =
-            deadEnd?.deadEnd || null;
-
-        state.simulation.distance =
-            radar?.distance ??
-            camera?.distance ??
-            deadEnd?.distance ??
-            null;
-
-        if (radar) {
-            showRadarWarning(
-                radar.radar,
-                radar.distance
-            );
-        }
-
-        if (camera) {
-            showCameraWarning(
-                camera.camera,
-                camera.distance
-            );
-        }
-
-        if (deadEnd) {
-            showDeadEndWarning(
-                deadEnd.deadEnd,
-                deadEnd.distance
-            );
+        if (status) {
+            status.textContent =
+                `PRUEBA · ${heading}° · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`;
         }
     }
 
@@ -2217,8 +2502,12 @@ out center tags;
             state.lastPosition?.longitude;
 
         if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
+            !Number.isFinite(
+                latitude
+            ) ||
+            !Number.isFinite(
+                longitude
+            )
         ) {
             const center =
                 state.map.getCenter();
@@ -2262,9 +2551,11 @@ out center tags;
         state.announced.deadEnd =
             null;
 
-        hideRadarWarning();
-        hideCameraWarning();
-        hideDeadEndWarning();
+        byId(
+            "radarWarning"
+        )?.classList.remove(
+            "active"
+        );
 
         updateUserMarker(
             latitude,
@@ -2287,22 +2578,12 @@ out center tags;
         );
     }
 
-    function startRefreshTimers() {
-        if (state.radarRefreshTimer) {
+    function startRadarRefresh() {
+        if (
+            state.radarRefreshTimer
+        ) {
             clearInterval(
                 state.radarRefreshTimer
-            );
-        }
-
-        if (state.cameraRefreshTimer) {
-            clearInterval(
-                state.cameraRefreshTimer
-            );
-        }
-
-        if (state.deadEndRefreshTimer) {
-            clearInterval(
-                state.deadEndRefreshTimer
             );
         }
 
@@ -2314,7 +2595,6 @@ out center tags;
                             ? {
                                 latitude:
                                     state.simulation.latitude,
-
                                 longitude:
                                     state.simulation.longitude
                             }
@@ -2326,22 +2606,44 @@ out center tags;
 
                     loadRadars(
                         position.latitude,
-                        position.longitude,
-                        true
+                        position.longitude
+                    );
+
+                    loadDeadEnds(
+                        position.latitude,
+                        position.longitude
                     );
                 },
                 CONFIG.radar.refreshInterval
             );
+    }
+
+    function startCameraRefresh() {
+        if (
+            state.cameraRefreshTimer
+        ) {
+            clearInterval(
+                state.cameraRefreshTimer
+            );
+        }
 
         state.cameraRefreshTimer =
             setInterval(
                 () => {
-                    loadOfficialCameras(
-                        true
-                    );
+                    loadOfficialCameras();
                 },
                 CONFIG.camera.refreshInterval
             );
+    }
+
+    function startDeadEndRefresh() {
+        if (
+            state.deadEndRefreshTimer
+        ) {
+            clearInterval(
+                state.deadEndRefreshTimer
+            );
+        }
 
         state.deadEndRefreshTimer =
             setInterval(
@@ -2351,7 +2653,6 @@ out center tags;
                             ? {
                                 latitude:
                                     state.simulation.latitude,
-
                                 longitude:
                                     state.simulation.longitude
                             }
@@ -2363,49 +2664,105 @@ out center tags;
 
                     loadDeadEnds(
                         position.latitude,
-                        position.longitude,
-                        true
+                        position.longitude
                     );
                 },
                 CONFIG.deadEnd.refreshInterval
             );
     }
 
-    function initialize() {
-        if (state.initialized) {
+    function setAlert(
+        type,
+        enabled
+    ) {
+        if (
+            Object.prototype.hasOwnProperty.call(
+                state.alerts,
+                type
+            )
+        ) {
+            state.alerts[type] =
+                Boolean(enabled);
+        }
+
+        if (
+            !enabled
+        ) {
+            if (
+                type === "radar"
+            ) {
+                state.announced.radar =
+                    null;
+            }
+
+            if (
+                type === "camera"
+            ) {
+                state.announced.camera =
+                    null;
+            }
+
+            if (
+                type === "deadEnd"
+            ) {
+                state.announced.deadEnd =
+                    null;
+            }
+        }
+    }
+
+    function setVoice(
+        enabled
+    ) {
+        state.alerts.voice =
+            Boolean(enabled);
+
+        if (
+            !enabled &&
+            "speechSynthesis" in window
+        ) {
+            window.speechSynthesis
+                .cancel();
+        }
+    }
+
+    async function initialize() {
+        if (
+            state.initialized
+        ) {
             return;
         }
 
         state.initialized =
             true;
 
-        if (!initializeMap()) {
+        if (
+            !initializeMap()
+        ) {
             return;
         }
 
         showStatus(
-            "RADAR ONLINE · OBTENIENDO GPS"
+            "RADAR ONLINE"
         );
 
         requestLocation();
 
         loadRadars(
             CONFIG.map.defaultCenter[0],
-            CONFIG.map.defaultCenter[1],
-            true
-        );
-
-        loadOfficialCameras(
-            true
+            CONFIG.map.defaultCenter[1]
         );
 
         loadDeadEnds(
             CONFIG.map.defaultCenter[0],
-            CONFIG.map.defaultCenter[1],
-            true
+            CONFIG.map.defaultCenter[1]
         );
 
-        startRefreshTimers();
+        loadOfficialCameras();
+
+        startRadarRefresh();
+        startCameraRefresh();
+        startDeadEndRefresh();
 
         setTimeout(
             () => {
@@ -2447,10 +2804,6 @@ out center tags;
             return state.cameras;
         },
 
-        get deadEnds() {
-            return state.deadEnds;
-        },
-
         get simulation() {
             return state.simulation;
         },
@@ -2459,8 +2812,11 @@ out center tags;
             return state.orientation;
         },
 
+        get alerts() {
+            return state.alerts;
+        },
+
         requestLocation,
-        enableDeviceOrientation,
         startSimulation,
         stopSimulation,
         simulationStep,
@@ -2469,38 +2825,17 @@ out center tags;
         distanceMeters,
         destinationPoint,
         checkAllAlerts,
-        updateSimulationUI,
+        enableDeviceOrientation,
+        setAlert,
+        setVoice,
         showStatus,
 
-        setSpeechEnabled(value) {
-            state.speechEnabled =
-                Boolean(value);
-
-            if (
-                !state.speechEnabled &&
-                "speechSynthesis" in window
-            ) {
-                window.speechSynthesis.cancel();
-            }
-        },
-
-        setRadarAlertEnabled(value) {
-            state.radarAlertEnabled =
-                Boolean(value);
-        },
-
-        setCameraAlertEnabled(value) {
-            state.cameraAlertEnabled =
-                Boolean(value);
-        },
-
-        setDeadEndAlertEnabled(value) {
-            state.deadEndAlertEnabled =
-                Boolean(value);
+        invalidateSize() {
+            state.map?.invalidateSize();
         },
 
         reloadCameras() {
-            return loadOfficialCameras(true);
+            return loadOfficialCameras();
         },
 
         reloadRadars() {
@@ -2514,19 +2849,14 @@ out center tags;
                     }
                     : state.lastPosition;
 
+            if (!position) {
+                return;
+            }
+
             return loadRadars(
-                position?.latitude ??
-                    CONFIG.map.defaultCenter[0],
-
-                position?.longitude ??
-                    CONFIG.map.defaultCenter[1],
-
-                true
+                position.latitude,
+                position.longitude
             );
-        },
-
-        invalidateSize() {
-            state.map?.invalidateSize();
         }
     };
 
