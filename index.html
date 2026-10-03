@@ -2,10 +2,8 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta
-        name="viewport"
-        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-    >
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#101518">
     <title>Radar</title>
 
     <link
@@ -39,28 +37,33 @@
 
         #controls {
             position: fixed;
-            top: max(12px, env(safe-area-inset-top));
+            top: max(10px, env(safe-area-inset-top));
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
             display: flex;
             align-items: center;
-            gap: 8px;
-            padding: 8px;
-            border-radius: 12px;
-            background: rgba(10, 15, 18, .92);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
+            gap: 6px;
+            max-width: calc(100vw - 16px);
+            padding: 7px;
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 14px;
+            background: rgba(10, 15, 18, .90);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            box-shadow: 0 5px 25px rgba(0,0,0,.35);
         }
 
         #controls button {
             border: 0;
-            border-radius: 8px;
-            padding: 10px 14px;
+            border-radius: 9px;
+            padding: 9px 11px;
             color: #fff;
             background: #222c30;
-            font-size: 13px;
-            font-weight: 700;
+            font-size: 11px;
+            font-weight: 800;
             cursor: pointer;
+            white-space: nowrap;
         }
 
         #controls button:hover {
@@ -73,67 +76,107 @@
 
         #controls button:disabled {
             opacity: .45;
-            cursor: not-allowed;
+            cursor: default;
         }
 
         #status {
             position: fixed;
-            left: 12px;
-            bottom: max(12px, env(safe-area-inset-bottom));
+            left: 10px;
+            bottom: max(10px, env(safe-area-inset-bottom));
             z-index: 1000;
-            padding: 8px 12px;
-            border-radius: 8px;
+            max-width: calc(100vw - 20px);
+            padding: 8px 11px;
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 9px;
             color: #fff;
-            background: rgba(10, 15, 18, .88);
-            font-size: 12px;
-            font-weight: 700;
+            background: rgba(10, 15, 18, .86);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            font-size: 11px;
+            font-weight: 800;
             pointer-events: none;
         }
 
         #radarWarning {
             position: fixed;
             left: 50%;
-            bottom: max(60px, calc(env(safe-area-inset-bottom) + 60px));
-            transform: translateX(-50%);
+            bottom: max(58px, calc(env(safe-area-inset-bottom) + 58px));
+            transform: translateX(-50%) translateY(8px);
             z-index: 1001;
             display: none;
             min-width: 220px;
-            padding: 12px 16px;
+            padding: 11px 15px;
             border: 2px solid #ff3131;
             border-radius: 12px;
             color: #fff;
-            background: rgba(50, 0, 0, .94);
+            background: rgba(45, 0, 0, .94);
             text-align: center;
-            box-shadow: 0 0 24px rgba(255, 49, 49, .5);
+            box-shadow: 0 0 24px rgba(255,49,49,.5);
+            opacity: 0;
         }
 
         #radarWarning.active {
             display: block;
+            animation: warningIn .18s ease-out forwards;
+        }
+
+        @keyframes warningIn {
+            from {
+                opacity: 0;
+                transform: translateX(-50%) translateY(8px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(-50%) translateY(0);
+            }
         }
 
         #radarWarningDistance {
             display: block;
-            font-size: 24px;
+            font-size: 23px;
             font-weight: 900;
         }
 
         #radarWarningLimit {
             display: block;
-            margin-top: 4px;
+            margin-top: 3px;
             color: #ff5b5b;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 800;
         }
 
         .leaflet-control-attribution {
-            font-size: 9px;
+            font-size: 8px;
         }
 
-        .keolel-camera-marker,
-        .keolel-radar-marker,
-        .keolel-user-marker {
-            background: transparent !important;
-            border: 0 !important;
+        .leaflet-popup-content-wrapper {
+            border-radius: 10px;
+        }
+
+        @media (max-width: 600px) {
+            #controls {
+                gap: 4px;
+                padding: 6px;
+            }
+
+            #controls button {
+                padding: 8px 8px;
+                font-size: 10px;
+            }
+        }
+
+        @media (max-width: 430px) {
+            #controls {
+                top: max(7px, env(safe-area-inset-top));
+                width: calc(100vw - 12px);
+                justify-content: center;
+                overflow-x: auto;
+            }
+
+            #controls button {
+                flex: 0 0 auto;
+            }
         }
     </style>
 </head>
@@ -143,149 +186,174 @@
 <div id="map"></div>
 
 <div id="controls">
-    <button id="gpsButton">
-        GPS
-    </button>
-
-    <button id="simulationButton">
-        MODO PRUEBA
-    </button>
-
-    <button id="moveButton">
-        AVANZAR
-    </button>
-
-    <button id="resetButton">
-        RESET
-    </button>
+    <button id="gpsButton">GPS</button>
+    <button id="simulationButton">PRUEBA</button>
+    <button id="moveButton">AVANZAR</button>
+    <button id="resetButton">RESET</button>
+    <button id="voiceButton">VOZ ON</button>
+    <button id="vibrationButton">VIB ON</button>
 </div>
 
-<div id="status">
-    INICIANDO...
-</div>
+<div id="status">INICIANDO...</div>
 
 <div id="radarWarning">
-    <span id="radarWarningDistance">
-        -- M
-    </span>
-
-    <span id="radarWarningLimit">
-        RADAR
-    </span>
+    <span id="radarWarningDistance">-- M</span>
+    <span id="radarWarningLimit">RADAR</span>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="traffic-map.js"></script>
 
 <script>
-    document.addEventListener(
-        "DOMContentLoaded",
-        () => {
-            const simulationButton =
-                document.getElementById(
-                    "simulationButton"
-                );
+    document.addEventListener("DOMContentLoaded", () => {
+        const simulationButton =
+            document.getElementById("simulationButton");
 
-            const moveButton =
-                document.getElementById(
-                    "moveButton"
-                );
+        const moveButton =
+            document.getElementById("moveButton");
 
-            const resetButton =
-                document.getElementById(
-                    "resetButton"
-                );
+        const resetButton =
+            document.getElementById("resetButton");
 
-            const gpsButton =
-                document.getElementById(
-                    "gpsButton"
-                );
+        const gpsButton =
+            document.getElementById("gpsButton");
 
-            function updateButtons() {
-                const active =
-                    window.TrafficMap
-                        ?.simulation
-                        ?.active === true;
+        const voiceButton =
+            document.getElementById("voiceButton");
 
-                simulationButton.classList.toggle(
-                    "active",
-                    active
-                );
+        const vibrationButton =
+            document.getElementById("vibrationButton");
 
-                moveButton.classList.toggle(
-                    "active",
-                    active
-                );
+        function updateButtons() {
+            const active =
+                window.TrafficMap?.simulation?.active === true;
 
-                moveButton.disabled =
-                    !active;
-            }
-
-            simulationButton.addEventListener(
-                "click",
-                () => {
-                    if (!window.TrafficMap) {
-                        return;
-                    }
-
-                    if (
-                        window.TrafficMap
-                            .simulation
-                            .active
-                    ) {
-                        window.TrafficMap
-                            .stopSimulation();
-                    } else {
-                        window.TrafficMap
-                            .startSimulation();
-                    }
-
-                    updateButtons();
-                }
+            simulationButton.classList.toggle(
+                "active",
+                active
             );
 
-            moveButton.addEventListener(
-                "click",
-                () => {
-                    if (
-                        !window.TrafficMap
-                            ?.simulation
-                            ?.active
-                    ) {
-                        return;
-                    }
-
-                    window.TrafficMap
-                        .simulationStep();
-                }
+            moveButton.classList.toggle(
+                "active",
+                active
             );
 
-            resetButton.addEventListener(
-                "click",
-                () => {
-                    window.TrafficMap
-                        ?.resetSimulation();
-
-                    updateButtons();
-                }
-            );
-
-            gpsButton.addEventListener(
-                "click",
-                () => {
-                    window.TrafficMap
-                        ?.requestLocation(true);
-                }
-            );
-
-            setInterval(
-                updateButtons,
-                250
-            );
-
-            updateButtons();
+            moveButton.disabled =
+                !active;
         }
-    );
+
+        simulationButton.addEventListener(
+            "click",
+            () => {
+                if (!window.TrafficMap) {
+                    return;
+                }
+
+                if (
+                    window.TrafficMap.simulation.active
+                ) {
+                    window.TrafficMap.stopSimulation();
+                } else {
+                    window.TrafficMap.startSimulation();
+                }
+
+                updateButtons();
+            }
+        );
+
+        moveButton.addEventListener(
+            "click",
+            () => {
+                if (
+                    !window.TrafficMap?.simulation?.active
+                ) {
+                    return;
+                }
+
+                window.TrafficMap.simulationStep();
+            }
+        );
+
+        resetButton.addEventListener(
+            "click",
+            () => {
+                window.TrafficMap?.resetSimulation();
+                updateButtons();
+            }
+        );
+
+        gpsButton.addEventListener(
+            "click",
+            () => {
+                window.TrafficMap?.requestLocation(true);
+            }
+        );
+
+        voiceButton.addEventListener(
+            "click",
+            () => {
+                if (!window.TrafficMap) {
+                    return;
+                }
+
+                const enabled =
+                    window.TrafficMap.alerts.voice;
+
+                window.TrafficMap.setVoiceEnabled(
+                    !enabled
+                );
+
+                if (
+                    !enabled &&
+                    "speechSynthesis" in window
+                ) {
+                    const utterance =
+                        new SpeechSynthesisUtterance(
+                            "Voz activada"
+                        );
+
+                    utterance.lang = "es-AR";
+
+                    window.speechSynthesis.speak(
+                        utterance
+                    );
+                }
+            }
+        );
+
+        vibrationButton.addEventListener(
+            "click",
+            () => {
+                if (!window.TrafficMap) {
+                    return;
+                }
+
+                const enabled =
+                    window.TrafficMap.alerts.vibration;
+
+                window.TrafficMap.setVibrationEnabled(
+                    !enabled
+                );
+
+                if (!enabled) {
+                    try {
+                        navigator.vibrate([
+                            100,
+                            60,
+                            100
+                        ]);
+                    } catch (_) {}
+                }
+            }
+        );
+
+        setInterval(
+            updateButtons,
+            250
+        );
+
+        updateButtons();
+    });
 </script>
 
 </body>
