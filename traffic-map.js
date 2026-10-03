@@ -86,8 +86,13 @@
     ) {
         const R = 6371000;
 
-        const lat1 = Number(latitude1) * Math.PI / 180;
-        const lat2 = Number(latitude2) * Math.PI / 180;
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
 
         const deltaLat =
             (Number(latitude2) - Number(latitude1)) *
@@ -119,8 +124,13 @@
         latitude2,
         longitude2
     ) {
-        const lat1 = Number(latitude1) * Math.PI / 180;
-        const lat2 = Number(latitude2) * Math.PI / 180;
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
 
         const deltaLng =
             (Number(longitude2) - Number(longitude1)) *
@@ -282,7 +292,14 @@
                     zoom: CONFIG.map.defaultZoom,
                     zoomControl: true,
                     attributionControl: true,
-                    preferCanvas: true
+                    preferCanvas: true,
+                    dragging: true,
+                    touchZoom: true,
+                    scrollWheelZoom: true,
+                    doubleClickZoom: true,
+                    boxZoom: true,
+                    keyboard: true,
+                    tap: true
                 }
             );
 
@@ -371,6 +388,10 @@
 
     function handlePosition(position) {
         if (!position?.coords) {
+            return;
+        }
+
+        if (state.simulation.active) {
             return;
         }
 
@@ -496,7 +517,8 @@
                     [latitude, longitude],
                     {
                         icon: createUserIcon(),
-                        zIndexOffset: 1000
+                        zIndexOffset: 1000,
+                        interactive: false
                     }
                 )
                     .addTo(state.map)
@@ -1077,19 +1099,6 @@ out center tags;
         );
 
         updateSimulationUI();
-
-        if (state.map) {
-            state.map.panTo(
-                [
-                    simulation.latitude,
-                    simulation.longitude
-                ],
-                {
-                    animate: true,
-                    duration: .25
-                }
-            );
-        }
     }
 
     function updateSimulationUI() {
@@ -1192,9 +1201,10 @@ out center tags;
                         state.simulation.active
                             ? {
                                 latitude:
-                                state.simulation.latitude,
+                                    state.simulation.latitude,
+
                                 longitude:
-                                state.simulation.longitude
+                                    state.simulation.longitude
                             }
                             : state.lastPosition;
 
