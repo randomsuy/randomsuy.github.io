@@ -2,9 +2,11 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <meta name="theme-color" content="#101518">
-    <title>Radar</title>
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    >
+    <title>Radar Montevideo</title>
 
     <link
         rel="stylesheet"
@@ -23,8 +25,11 @@
             margin: 0;
             padding: 0;
             overflow: hidden;
-            font-family: Arial, sans-serif;
-            background: #111;
+            font-family:
+                Inter,
+                Arial,
+                sans-serif;
+            background: #101820;
         }
 
         #map {
@@ -35,147 +40,528 @@
             z-index: 1;
         }
 
-        #controls {
+        .leaflet-tile {
+            filter:
+                saturate(1.08)
+                contrast(1.04);
+        }
+
+        #topHud {
             position: fixed;
-            top: max(10px, env(safe-area-inset-top));
+            top:
+                max(
+                    10px,
+                    env(safe-area-inset-top)
+                );
             left: 50%;
             transform: translateX(-50%);
             z-index: 1000;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            max-width: calc(100vw - 16px);
-            padding: 7px;
-            border: 1px solid rgba(255,255,255,.08);
-            border-radius: 14px;
-            background: rgba(10, 15, 18, .90);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            box-shadow: 0 5px 25px rgba(0,0,0,.35);
+            width:
+                min(
+                    calc(100% - 20px),
+                    460px
+                );
+            display: grid;
+            grid-template-columns:
+                1fr
+                auto;
+            gap: 8px;
+            pointer-events: none;
         }
 
-        #controls button {
-            border: 0;
-            border-radius: 9px;
-            padding: 9px 11px;
-            color: #fff;
-            background: #222c30;
-            font-size: 11px;
-            font-weight: 800;
-            cursor: pointer;
+        .nav-card {
+            min-height: 58px;
+            padding: 9px 12px;
+            border:
+                1px solid
+                rgba(255,255,255,.13);
+            border-radius: 17px;
+            background:
+                linear-gradient(
+                    145deg,
+                    rgba(13,23,29,.94),
+                    rgba(5,12,16,.9)
+                );
+            box-shadow:
+                0 10px 30px
+                rgba(0,0,0,.34),
+                inset 0 1px 0
+                rgba(255,255,255,.05);
+            backdrop-filter:
+                blur(14px);
+            -webkit-backdrop-filter:
+                blur(14px);
+            color: white;
+            pointer-events: auto;
+        }
+
+        #roadName {
+            font-size: 14px;
+            font-weight: 900;
+            letter-spacing: .2px;
             white-space: nowrap;
-        }
-
-        #controls button:hover {
-            background: #304047;
-        }
-
-        #controls button.active {
-            background: #168b97;
-        }
-
-        #controls button:disabled {
-            opacity: .45;
-            cursor: default;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         #status {
-            position: fixed;
-            left: 10px;
-            bottom: max(10px, env(safe-area-inset-bottom));
-            z-index: 1000;
-            max-width: calc(100vw - 20px);
-            padding: 8px 11px;
-            border: 1px solid rgba(255,255,255,.08);
-            border-radius: 9px;
-            color: #fff;
-            background: rgba(10, 15, 18, .86);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            font-size: 11px;
+            margin-top: 4px;
+            color: #9db0b8;
+            font-size: 10px;
             font-weight: 800;
-            pointer-events: none;
+            letter-spacing: .4px;
+        }
+
+        #headingCard {
+            min-width: 72px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #headingDirection {
+            color: #00d9ff;
+            font-size: 18px;
+            font-weight: 1000;
+        }
+
+        #headingValue {
+            margin-top: -2px;
+            color: #91a2aa;
+            font-size: 9px;
+            font-weight: 800;
+        }
+
+        #controls {
+            position: fixed;
+            left: 50%;
+            bottom:
+                max(
+                    12px,
+                    env(safe-area-inset-bottom)
+                );
+            transform: translateX(-50%);
+            z-index: 1000;
+            width:
+                min(
+                    calc(100% - 20px),
+                    460px
+                );
+            display: grid;
+            grid-template-columns:
+                repeat(4, 1fr);
+            gap: 6px;
+            padding: 7px;
+            border:
+                1px solid
+                rgba(255,255,255,.12);
+            border-radius: 17px;
+            background:
+                rgba(7,13,17,.93);
+            box-shadow:
+                0 10px 30px
+                rgba(0,0,0,.4);
+            backdrop-filter:
+                blur(14px);
+        }
+
+        #controls button {
+            min-height: 43px;
+            border: 0;
+            border-radius: 11px;
+            color: #dbe7eb;
+            background:
+                #1a252b;
+            font-size: 10px;
+            font-weight: 900;
+            cursor: pointer;
+            transition:
+                .18s ease;
+        }
+
+        #controls button:hover {
+            background:
+                #24353d;
+        }
+
+        #controls button.active {
+            color: white;
+            background:
+                linear-gradient(
+                    145deg,
+                    #078da0,
+                    #075f70
+                );
+            box-shadow:
+                0 0 14px
+                rgba(0,217,255,.2);
+        }
+
+        #controls button:disabled {
+            opacity: .35;
+            cursor: default;
+        }
+
+        #alertsPanel {
+            position: fixed;
+            right: 10px;
+            top: 50%;
+            transform:
+                translateY(-50%);
+            z-index: 1000;
+            width: 48px;
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+        }
+
+        .toggle {
+            width: 48px;
+            min-height: 48px;
+            border:
+                1px solid
+                rgba(255,255,255,.12);
+            border-radius: 15px;
+            background:
+                rgba(8,15,19,.91);
+            color: #91a1a8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 2px;
+            box-shadow:
+                0 7px 20px
+                rgba(0,0,0,.3);
+            backdrop-filter:
+                blur(12px);
+            cursor: pointer;
+        }
+
+        .toggle.active {
+            color: white;
+            border-color:
+                rgba(0,217,255,.45);
+            background:
+                rgba(0,91,107,.9);
+        }
+
+        .toggle-icon {
+            font-size: 17px;
+            line-height: 17px;
+        }
+
+        .toggle-label {
+            font-size: 7px;
+            font-weight: 1000;
+            letter-spacing: .3px;
+        }
+
+        .toggle-dot {
+            position: absolute;
+            margin-top: 32px;
+            font-size: 6px;
+            font-weight: 1000;
         }
 
         #radarWarning {
             position: fixed;
             left: 50%;
-            bottom: max(58px, calc(env(safe-area-inset-bottom) + 58px));
-            transform: translateX(-50%) translateY(8px);
+            bottom:
+                max(
+                    82px,
+                    calc(
+                        env(safe-area-inset-bottom) +
+                        82px
+                    )
+                );
+            transform:
+                translateX(-50%)
+                translateY(12px);
             z-index: 1001;
             display: none;
-            min-width: 220px;
-            padding: 11px 15px;
-            border: 2px solid #ff3131;
-            border-radius: 12px;
-            color: #fff;
-            background: rgba(45, 0, 0, .94);
+            width:
+                min(
+                    calc(100% - 100px),
+                    300px
+                );
+            padding: 13px 17px;
+            border:
+                1px solid
+                rgba(255,255,255,.14);
+            border-radius: 18px;
+            color: white;
+            background:
+                rgba(12,17,21,.95);
             text-align: center;
-            box-shadow: 0 0 24px rgba(255,49,49,.5);
+            box-shadow:
+                0 12px 35px
+                rgba(0,0,0,.42);
+            backdrop-filter:
+                blur(15px);
             opacity: 0;
+            transition:
+                .2s ease;
         }
 
         #radarWarning.active {
             display: block;
-            animation: warningIn .18s ease-out forwards;
+            opacity: 1;
+            transform:
+                translateX(-50%)
+                translateY(0);
         }
 
-        @keyframes warningIn {
-            from {
-                opacity: 0;
-                transform: translateX(-50%) translateY(8px);
-            }
+        #radarWarning.radar-mode {
+            border-color:
+                rgba(255,66,66,.75);
+            box-shadow:
+                0 0 28px
+                rgba(255,49,49,.25);
+        }
 
-            to {
-                opacity: 1;
-                transform: translateX(-50%) translateY(0);
-            }
+        #radarWarning.camera-mode {
+            border-color:
+                rgba(255,150,25,.75);
+            box-shadow:
+                0 0 28px
+                rgba(255,150,25,.22);
         }
 
         #radarWarningDistance {
             display: block;
-            font-size: 23px;
-            font-weight: 900;
+            font-size: 27px;
+            font-weight: 1000;
+            letter-spacing: -.5px;
         }
 
         #radarWarningLimit {
             display: block;
             margin-top: 3px;
-            color: #ff5b5b;
-            font-size: 13px;
-            font-weight: 800;
+            color: #ff5757;
+            font-size: 11px;
+            font-weight: 1000;
+        }
+
+        #radarWarning.camera-mode
+        #radarWarningLimit {
+            color: #ff9b24;
+        }
+
+        .user-navigation-marker {
+            background: transparent;
+            border: 0;
+        }
+
+        .user-arrow {
+            width: 42px;
+            height: 42px;
+            position: relative;
+            transform-origin: center;
+            filter:
+                drop-shadow(
+                    0 0 7px
+                    rgba(0,217,255,.65)
+                );
+        }
+
+        .user-arrow::before {
+            content: "";
+            position: absolute;
+            left: 50%;
+            top: 2px;
+            transform:
+                translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left:
+                10px solid transparent;
+            border-right:
+                10px solid transparent;
+            border-bottom:
+                26px solid #00d9ff;
+        }
+
+        .user-arrow-core {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 11px;
+            height: 11px;
+            transform:
+                translate(-50%, -50%);
+            border:
+                3px solid #071014;
+            border-radius: 50%;
+            background: #fff;
+        }
+
+        .radar-marker,
+        .camera-marker {
+            background: transparent;
+            border: 0;
+        }
+
+        .radar-icon {
+            position: relative;
+            width: 54px;
+            height: 54px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            background:
+                radial-gradient(
+                    circle,
+                    #351010 0%,
+                    #18090a 56%,
+                    #090b0d 100%
+                );
+            border:
+                2px solid #ff3535;
+            color: #fff;
+            box-shadow:
+                0 0 14px
+                rgba(255,49,49,.8),
+                0 0 28px
+                rgba(255,49,49,.25);
+        }
+
+        .radar-ring {
+            position: absolute;
+            inset: 5px;
+            border:
+                1px solid
+                rgba(255,85,85,.45);
+            border-radius: 50%;
+        }
+
+        .radar-value {
+            position: relative;
+            margin-top: -3px;
+            font-size: 10px;
+            font-weight: 1000;
+        }
+
+        .radar-unit {
+            position: absolute;
+            bottom: 9px;
+            font-size: 5px;
+            font-weight: 1000;
+            color: #ff7070;
+        }
+
+        .camera-icon {
+            position: relative;
+            width: 40px;
+            height: 31px;
+            border-radius: 9px;
+            background:
+                linear-gradient(
+                    145deg,
+                    #ffad35,
+                    #ed6d00
+                );
+            border:
+                2px solid #fff0d1;
+            box-shadow:
+                0 0 15px
+                rgba(255,142,24,.8),
+                0 0 27px
+                rgba(255,142,24,.25);
+        }
+
+        .camera-icon::before {
+            content: "";
+            position: absolute;
+            left: 5px;
+            top: -7px;
+            width: 13px;
+            height: 8px;
+            border-radius: 4px 4px 0 0;
+            background: #ff9a1e;
+        }
+
+        .camera-lens {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            width: 15px;
+            height: 15px;
+            transform:
+                translate(-50%, -50%);
+            border:
+                3px solid #fff;
+            border-radius: 50%;
+            background: #222;
+            box-shadow:
+                inset 0 0 0 3px #ff9b24;
+        }
+
+        .camera-light {
+            position: absolute;
+            right: 5px;
+            top: 5px;
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: #fff;
+            box-shadow:
+                0 0 7px #fff;
+        }
+
+        .popup-card {
+            min-width: 190px;
+            font-family:
+                Arial,
+                sans-serif;
+            color: #172126;
+            line-height: 1.55;
+        }
+
+        .popup-title {
+            margin-bottom: 5px;
+            color: #d92121;
+            font-weight: 1000;
+        }
+
+        .camera-title {
+            color: #e47700;
+        }
+
+        .leaflet-popup-content {
+            margin: 10px 12px;
         }
 
         .leaflet-control-attribution {
             font-size: 8px;
         }
 
-        .leaflet-popup-content-wrapper {
-            border-radius: 10px;
-        }
+        @media (
+            max-width: 600px
+        ) {
+            #alertsPanel {
+                top: auto;
+                bottom:
+                    max(
+                        85px,
+                        calc(
+                            env(safe-area-inset-bottom) +
+                            85px
+                        )
+                    );
+                transform: none;
+            }
 
-        @media (max-width: 600px) {
             #controls {
-                gap: 4px;
-                padding: 6px;
+                grid-template-columns:
+                    repeat(4, 1fr);
             }
 
             #controls button {
-                padding: 8px 8px;
-                font-size: 10px;
-            }
-        }
-
-        @media (max-width: 430px) {
-            #controls {
-                top: max(7px, env(safe-area-inset-top));
-                width: calc(100vw - 12px);
-                justify-content: center;
-                overflow-x: auto;
-            }
-
-            #controls button {
-                flex: 0 0 auto;
+                padding: 8px 3px;
+                font-size: 9px;
             }
         }
     </style>
@@ -185,175 +571,358 @@
 
 <div id="map"></div>
 
-<div id="controls">
-    <button id="gpsButton">GPS</button>
-    <button id="simulationButton">PRUEBA</button>
-    <button id="moveButton">AVANZAR</button>
-    <button id="resetButton">RESET</button>
-    <button id="voiceButton">VOZ ON</button>
-    <button id="vibrationButton">VIB ON</button>
+<div id="topHud">
+    <div class="nav-card">
+        <div id="roadName">
+            MONTEVIDEO
+        </div>
+        <div id="status">
+            INICIANDO...
+        </div>
+    </div>
+
+    <div
+        id="headingCard"
+        class="nav-card"
+    >
+        <div id="headingDirection">
+            —
+        </div>
+        <div id="headingValue">
+            --°
+        </div>
+    </div>
 </div>
 
-<div id="status">INICIANDO...</div>
+<div id="alertsPanel">
+
+    <button
+        id="voiceToggle"
+        class="toggle"
+        type="button"
+        title="Voz"
+    >
+        <span class="toggle-icon">
+            🔊
+        </span>
+        <span class="toggle-label">
+            VOZ
+        </span>
+        <span class="toggle-dot">
+            ON
+        </span>
+    </button>
+
+    <button
+        id="radarToggle"
+        class="toggle"
+        type="button"
+        title="Alertas de radares"
+    >
+        <span class="toggle-icon">
+            ⚠
+        </span>
+        <span class="toggle-label">
+            RADAR
+        </span>
+        <span class="toggle-dot">
+            ON
+        </span>
+    </button>
+
+    <button
+        id="cameraToggle"
+        class="toggle"
+        type="button"
+        title="Alertas de cámaras"
+    >
+        <span class="toggle-icon">
+            📷
+        </span>
+        <span class="toggle-label">
+            CÁMARA
+        </span>
+        <span class="toggle-dot">
+            ON
+        </span>
+    </button>
+
+    <button
+        id="orientationToggle"
+        class="toggle"
+        type="button"
+        title="Orientación"
+    >
+        <span class="toggle-icon">
+            🧭
+        </span>
+        <span class="toggle-label">
+            RUMBO
+        </span>
+        <span class="toggle-dot">
+            ON
+        </span>
+    </button>
+
+</div>
+
+<div id="controls">
+
+    <button id="gpsButton">
+        GPS
+    </button>
+
+    <button id="simulationButton">
+        PRUEBA
+    </button>
+
+    <button
+        id="moveButton"
+        disabled
+    >
+        AVANZAR
+    </button>
+
+    <button id="resetButton">
+        RESET
+    </button>
+
+</div>
 
 <div id="radarWarning">
-    <span id="radarWarningDistance">-- M</span>
-    <span id="radarWarningLimit">RADAR</span>
+    <span id="radarWarningDistance">
+        -- M
+    </span>
+
+    <span id="radarWarningLimit">
+        RADAR
+    </span>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
 <script src="traffic-map.js"></script>
 
 <script>
-    document.addEventListener("DOMContentLoaded", () => {
-        const simulationButton =
-            document.getElementById("simulationButton");
-
-        const moveButton =
-            document.getElementById("moveButton");
-
-        const resetButton =
-            document.getElementById("resetButton");
-
-        const gpsButton =
-            document.getElementById("gpsButton");
-
-        const voiceButton =
-            document.getElementById("voiceButton");
-
-        const vibrationButton =
-            document.getElementById("vibrationButton");
-
-        function updateButtons() {
-            const active =
-                window.TrafficMap?.simulation?.active === true;
-
-            simulationButton.classList.toggle(
-                "active",
-                active
-            );
-
-            moveButton.classList.toggle(
-                "active",
-                active
-            );
-
-            moveButton.disabled =
-                !active;
-        }
-
-        simulationButton.addEventListener(
-            "click",
-            () => {
-                if (!window.TrafficMap) {
-                    return;
-                }
-
-                if (
-                    window.TrafficMap.simulation.active
-                ) {
-                    window.TrafficMap.stopSimulation();
-                } else {
-                    window.TrafficMap.startSimulation();
-                }
-
-                updateButtons();
-            }
-        );
-
-        moveButton.addEventListener(
-            "click",
-            () => {
-                if (
-                    !window.TrafficMap?.simulation?.active
-                ) {
-                    return;
-                }
-
-                window.TrafficMap.simulationStep();
-            }
-        );
-
-        resetButton.addEventListener(
-            "click",
-            () => {
-                window.TrafficMap?.resetSimulation();
-                updateButtons();
-            }
-        );
-
-        gpsButton.addEventListener(
-            "click",
-            () => {
-                window.TrafficMap?.requestLocation(true);
-            }
-        );
-
-        voiceButton.addEventListener(
-            "click",
-            () => {
-                if (!window.TrafficMap) {
-                    return;
-                }
-
-                const enabled =
-                    window.TrafficMap.alerts.voice;
-
-                window.TrafficMap.setVoiceEnabled(
-                    !enabled
+    document.addEventListener(
+        "DOMContentLoaded",
+        () => {
+            const simulationButton =
+                document.getElementById(
+                    "simulationButton"
                 );
 
-                if (
-                    !enabled &&
-                    "speechSynthesis" in window
-                ) {
-                    const utterance =
-                        new SpeechSynthesisUtterance(
-                            "Voz activada"
-                        );
+            const moveButton =
+                document.getElementById(
+                    "moveButton"
+                );
 
-                    utterance.lang = "es-AR";
+            const resetButton =
+                document.getElementById(
+                    "resetButton"
+                );
 
-                    window.speechSynthesis.speak(
-                        utterance
+            const gpsButton =
+                document.getElementById(
+                    "gpsButton"
+                );
+
+            const voiceToggle =
+                document.getElementById(
+                    "voiceToggle"
+                );
+
+            const radarToggle =
+                document.getElementById(
+                    "radarToggle"
+                );
+
+            const cameraToggle =
+                document.getElementById(
+                    "cameraToggle"
+                );
+
+            const orientationToggle =
+                document.getElementById(
+                    "orientationToggle"
+                );
+
+            function updateButtons() {
+                const active =
+                    window.TrafficMap
+                        ?.simulation
+                        ?.active === true;
+
+                simulationButton
+                    .classList
+                    .toggle(
+                        "active",
+                        active
                     );
-                }
+
+                moveButton
+                    .classList
+                    .toggle(
+                        "active",
+                        active
+                    );
+
+                moveButton.disabled =
+                    !active;
             }
-        );
 
-        vibrationButton.addEventListener(
-            "click",
-            () => {
-                if (!window.TrafficMap) {
-                    return;
-                }
+            simulationButton
+                .addEventListener(
+                    "click",
+                    () => {
+                        if (
+                            !window.TrafficMap
+                        ) {
+                            return;
+                        }
 
-                const enabled =
-                    window.TrafficMap.alerts.vibration;
+                        if (
+                            window.TrafficMap
+                                .simulation
+                                .active
+                        ) {
+                            window.TrafficMap
+                                .stopSimulation();
+                        } else {
+                            window.TrafficMap
+                                .startSimulation();
+                        }
 
-                window.TrafficMap.setVibrationEnabled(
-                    !enabled
+                        updateButtons();
+                    }
                 );
 
-                if (!enabled) {
-                    try {
-                        navigator.vibrate([
-                            100,
-                            60,
-                            100
-                        ]);
-                    } catch (_) {}
-                }
-            }
-        );
+            moveButton
+                .addEventListener(
+                    "click",
+                    () => {
+                        if (
+                            !window.TrafficMap
+                                ?.simulation
+                                ?.active
+                        ) {
+                            return;
+                        }
 
-        setInterval(
-            updateButtons,
-            250
-        );
+                        window.TrafficMap
+                            .simulationStep();
+                    }
+                );
 
-        updateButtons();
-    });
+            resetButton
+                .addEventListener(
+                    "click",
+                    () => {
+                        window.TrafficMap
+                            ?.resetSimulation();
+
+                        updateButtons();
+                    }
+                );
+
+            gpsButton
+                .addEventListener(
+                    "click",
+                    () => {
+                        window.TrafficMap
+                            ?.requestLocation(
+                                true
+                            );
+                    }
+                );
+
+            voiceToggle
+                .addEventListener(
+                    "click",
+                    () => {
+                        const current =
+                            window.TrafficMap
+                                ?.preferences
+                                ?.voice === true;
+
+                        window.TrafficMap
+                            ?.setPreference(
+                                "voice",
+                                !current
+                            );
+                    }
+                );
+
+            radarToggle
+                .addEventListener(
+                    "click",
+                    () => {
+                        const current =
+                            window.TrafficMap
+                                ?.preferences
+                                ?.radarAlert === true;
+
+                        window.TrafficMap
+                            ?.setPreference(
+                                "radarAlert",
+                                !current
+                            );
+                    }
+                );
+
+            cameraToggle
+                .addEventListener(
+                    "click",
+                    () => {
+                        const current =
+                            window.TrafficMap
+                                ?.preferences
+                                ?.cameraAlert === true;
+
+                        window.TrafficMap
+                            ?.setPreference(
+                                "cameraAlert",
+                                !current
+                            );
+                    }
+                );
+
+            orientationToggle
+                .addEventListener(
+                    "click",
+                    async () => {
+                        const current =
+                            window.TrafficMap
+                                ?.preferences
+                                ?.orientation === true;
+
+                        window.TrafficMap
+                            ?.setPreference(
+                                "orientation",
+                                !current
+                            );
+
+                        if (
+                            !current
+                        ) {
+                            await window.TrafficMap
+                                ?.requestLocation(
+                                    true
+                                );
+                        }
+                    }
+                );
+
+            setInterval(
+                updateButtons,
+                250
+            );
+
+            updateButtons();
+        }
+    );
 </script>
 
 </body>
