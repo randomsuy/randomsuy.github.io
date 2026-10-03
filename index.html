@@ -26,7 +26,7 @@
             padding: 0;
             overflow: hidden;
             font-family: Arial, sans-serif;
-            background: #101416;
+            background: #071014;
         }
 
         #map {
@@ -35,33 +35,28 @@
             width: 100%;
             height: 100%;
             z-index: 1;
-            background: #d9d6cc;
         }
 
-        .leaflet-tile {
+        .leaflet-tile-pane {
             filter:
-                saturate(.82)
-                contrast(1.08)
-                brightness(1.04);
-        }
-
-        .leaflet-container {
-            background: #d9d6cc;
+                contrast(1.12)
+                saturate(.72)
+                brightness(1.06);
         }
 
         .leaflet-control-zoom {
-            margin-bottom: 90px !important;
+            margin-top: 92px !important;
             margin-right: 10px !important;
             border: 0 !important;
-            box-shadow: 0 5px 20px rgba(0,0,0,.28) !important;
+            box-shadow: 0 4px 20px rgba(0,0,0,.3) !important;
         }
 
         .leaflet-control-zoom a {
             width: 38px !important;
             height: 38px !important;
             line-height: 38px !important;
-            color: #172025 !important;
-            background: rgba(255,255,255,.94) !important;
+            background: rgba(8,15,19,.92) !important;
+            color: #fff !important;
             border: 0 !important;
         }
 
@@ -70,134 +65,685 @@
             top: max(10px, env(safe-area-inset-top));
             left: 50%;
             transform: translateX(-50%);
-            z-index: 2000;
-            width: min(94vw, 480px);
+            z-index: 1000;
+            width: min(94vw, 520px);
             display: flex;
-            align-items: center;
+            flex-direction: column;
             gap: 8px;
-            padding: 8px;
-            border-radius: 18px;
-            background: rgba(8,14,17,.92);
-            backdrop-filter: blur(14px);
-            box-shadow:
-                0 8px 30px rgba(0,0,0,.32),
-                inset 0 1px rgba(255,255,255,.06);
+            pointer-events: none;
         }
 
-        #status {
-            flex: 1;
-            min-width: 0;
-            padding: 9px 11px;
-            border-radius: 12px;
-            color: #e9fbff;
-            background: rgba(255,255,255,.06);
-            font-size: 11px;
-            font-weight: 800;
-            white-space: nowrap;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        #navigationHud {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 10px 12px;
+            border: 1px solid rgba(255,255,255,.1);
+            border-radius: 16px;
+            color: #fff;
+            background: rgba(8,15,19,.9);
+            box-shadow:
+                0 8px 30px rgba(0,0,0,.35),
+                inset 0 1px 0 rgba(255,255,255,.05);
+            backdrop-filter: blur(12px);
         }
 
         #headingBox {
-            width: 42px;
-            height: 42px;
-            flex: 0 0 42px;
-            position: relative;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+        }
+
+        #headingArrow {
+            width: 30px;
+            height: 30px;
             display: flex;
             align-items: center;
             justify-content: center;
-            border-radius: 50%;
-            background: #111b20;
-            border: 1px solid rgba(255,255,255,.12);
-        }
-
-        #headingIndicator {
-            width: 24px;
-            height: 24px;
-            position: relative;
-            transition: transform .18s linear;
-        }
-
-        #headingIndicator::before {
-            content: "";
-            position: absolute;
-            left: 9px;
-            top: 1px;
-            border-left: 3px solid transparent;
-            border-right: 3px solid transparent;
-            border-bottom: 16px solid #20d8ff;
-        }
-
-        #headingIndicator::after {
-            content: "N";
-            position: absolute;
-            top: 23px;
-            left: 8px;
-            color: #fff;
-            font-size: 7px;
+            color: #36c8d8;
+            font-size: 24px;
             font-weight: 900;
+            transform-origin: center;
+        }
+
+        #headingValue {
+            font-size: 13px;
+            font-weight: 800;
+        }
+
+        #gpsState {
+            color: #8cecf3;
+            font-size: 11px;
+            font-weight: 800;
         }
 
         #controls {
-            position: fixed;
-            left: 50%;
-            bottom: max(12px, env(safe-area-inset-bottom));
-            transform: translateX(-50%);
-            z-index: 2000;
-            width: min(96vw, 520px);
             display: flex;
             gap: 6px;
-            padding: 7px;
-            border-radius: 18px;
-            background: rgba(8,14,17,.94);
-            backdrop-filter: blur(14px);
-            box-shadow: 0 8px 30px rgba(0,0,0,.35);
+            overflow-x: auto;
+            padding: 2px;
+            pointer-events: auto;
+            scrollbar-width: none;
+        }
+
+        #controls::-webkit-scrollbar {
+            display: none;
         }
 
         #controls button {
-            flex: 1;
-            min-width: 0;
-            min-height: 42px;
-            border: 0;
-            border-radius: 12px;
-            padding: 8px 7px;
+            flex: 0 0 auto;
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 10px;
+            padding: 9px 12px;
             color: #fff;
-            background: #202d32;
-            font-size: 10px;
-            font-weight: 900;
+            background: rgba(8,15,19,.92);
+            font-size: 11px;
+            font-weight: 800;
             cursor: pointer;
+            box-shadow: 0 4px 14px rgba(0,0,0,.22);
         }
 
         #controls button.active {
             color: #071014;
-            background: #20d8ff;
+            background: #36c8d8;
         }
 
         #controls button.orange.active {
-            color: #1a0e00;
-            background: #ff8a00;
+            color: #111;
+            background: #ff9f1c;
         }
 
-        #settings {
+        #controls button.red.active {
+            color: #fff;
+            background: #e83939;
+        }
+
+        #controls button.yellow.active {
+            color: #111;
+            background: #ffd166;
+        }
+
+        #controls button:disabled {
+            opacity: .35;
+        }
+
+        #status {
             position: fixed;
-            right: 10px;
-            top: max(70px, calc(env(safe-area-inset-top) + 62px));
-            z-index: 2000;
-            width: 178px;
-            padding: 10px;
-            border-radius: 16px;
-            background: rgba(8,14,17,.92);
-            backdrop-filter: blur(14px);
-            box-shadow: 0 8px 28px rgba(0,0,0,.3);
+            left: 50%;
+            bottom: max(12px, env(safe-area-inset-bottom));
+            transform: translateX(-50%);
+            z-index: 1000;
+            width: max-content;
+            max-width: 90vw;
+            padding: 8px 12px;
+            border: 1px solid rgba(255,255,255,.08);
+            border-radius: 10px;
+            color: #fff;
+            background: rgba(8,15,19,.9);
+            font-size: 10px;
+            font-weight: 800;
+            pointer-events: none;
+            box-shadow: 0 5px 20px rgba(0,0,0,.25);
         }
 
-        .setting {
+        #radarWarning {
+            position: fixed;
+            left: 50%;
+            bottom: max(60px, calc(env(safe-area-inset-bottom) + 60px));
+            transform: translateX(-50%);
+            z-index: 1001;
+            display: none;
+            min-width: 220px;
+            padding: 12px 18px;
+            border: 2px solid #ff3131;
+            border-radius: 15px;
+            color: #fff;
+            background: rgba(36,5,5,.94);
+            text-align: center;
+            box-shadow: 0 0 30px rgba(255,49,49,.4);
+            pointer-events: none;
+        }
+
+        #radarWarning[data-type="camera"] {
+            border-color: #ff9f1c;
+            background: rgba(55,30,0,.94);
+            box-shadow: 0 0 30px rgba(255,159,28,.35);
+        }
+
+        #radarWarning[data-type="deadend"] {
+            border-color: #ffd166;
+            background: rgba(55,42,0,.94);
+            box-shadow: 0 0 30px rgba(255,209,102,.35);
+        }
+
+        #radarWarning.active {
+            display: block;
+        }
+
+        #radarWarningDistance {
+            display: block;
+            font-size: 27px;
+            font-weight: 900;
+        }
+
+        #radarWarningLimit {
+            display: block;
+            margin-top: 3px;
+            font-size: 13px;
+            font-weight: 900;
+        }
+
+        .map-popup {
+            min-width: 180px;
+            color: #111;
+            font-family: Arial, sans-serif;
+            line-height: 1.45;
+        }
+
+        .traffic-user-marker {
+            background: transparent !important;
+            border: 0 !important;
+        }
+
+        .user-marker {
+            width: 46px;
+            height: 46px;
+            position: relative;
+            transform-origin: center;
+            filter: drop-shadow(0 2px 7px rgba(0,0,0,.45));
+        }
+
+        .user-arrow {
+            position: absolute;
+            top: 2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 7px solid transparent;
+            border-right: 7px solid transparent;
+            border-bottom: 19px solid #36c8d8;
+        }
+
+        .user-dot {
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            left: 12px;
+            top: 13px;
+            border-radius: 50%;
+            background: #36c8d8;
+            border: 3px solid #071014;
+            box-shadow:
+                0 0 0 3px rgba(54,200,216,.25),
+                0 0 18px rgba(54,200,216,.8);
+        }
+
+        .traffic-radar-marker,
+        .traffic-camera-marker,
+        .traffic-deadend-marker {
+            background: transparent !important;
+            border: 0 !important;
+        }
+
+        .radar-marker {
+            position: relative;
+            width: 44px;
+            height: 44px;
             display: flex;
             align-items: center;
-            justify-content: space-between;
-            gap: 8px;
-            padding: 8px 4px;
-            color: #fff;
+            justify-content: center;
+            border-radius: 50%;
+            background: #190708;
+            border: 2px solid #ff3131;
+            color: #ff5b5b;
+            font-family: monospace;
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 900;
+            box-shadow:
+                0 0 12px rgba(255,49,49,.8),
+                0 0 25px rgba(255,49,49,.3);
         }
+
+        .radar-ring {
+            position: absolute;
+            inset: 4px;
+            border: 1px solid rgba(255,49,49,.5);
+            border-radius: 50%;
+        }
+
+        .camera-marker {
+            position: relative;
+            width: 40px;
+            height: 34px;
+            margin-top: 5px;
+            border-radius: 8px;
+            background: #ff9f1c;
+            border: 2px solid #7b4300;
+            box-shadow:
+                0 0 14px rgba(255,159,28,.7),
+                0 4px 12px rgba(0,0,0,.35);
+        }
+
+        .camera-body {
+            position: absolute;
+            width: 20px;
+            height: 12px;
+            left: 8px;
+            top: 9px;
+            border-radius: 4px;
+            background: #171717;
+        }
+
+        .camera-lens {
+            position: absolute;
+            z-index: 2;
+            width: 8px;
+            height: 8px;
+            left: 22px;
+            top: 11px;
+            border-radius: 50%;
+            background: #36c8d8;
+            border: 2px solid #071014;
+        }
+
+        .deadend-marker {
+            width: 34px;
+            height: 34px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            color: #111;
+            background: #ffd166;
+            border: 2px solid #8a6500;
+            font-size: 20px;
+            font-weight: 900;
+            box-shadow:
+                0 0 14px rgba(255,209,102,.6),
+                0 4px 12px rgba(0,0,0,.3);
+        }
+
+        @media (max-width: 600px) {
+            #controls button {
+                padding: 9px 10px;
+                font-size: 10px;
+            }
+
+            #navigationHud {
+                padding: 9px 11px;
+            }
+
+            .leaflet-control-zoom {
+                margin-top: 100px !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<div id="map"></div>
+
+<div id="topHud">
+    <div id="navigationHud">
+        <div id="headingBox">
+            <div id="headingArrow">↑</div>
+            <div id="headingValue">000°</div>
+        </div>
+
+        <div id="gpsState">GPS OFF</div>
+    </div>
+
+    <div id="controls">
+        <button id="gpsButton">GPS</button>
+        <button id="simulationButton">PRUEBA</button>
+        <button id="moveButton">AVANZAR</button>
+        <button id="resetButton">RESET</button>
+        <button id="voiceButton" class="active">VOZ</button>
+        <button id="radarButton" class="red active">RADAR</button>
+        <button id="cameraButton" class="orange active">CÁMARAS</button>
+        <button id="deadEndButton" class="yellow active">SIN SALIDA</button>
+    </div>
+</div>
+
+<div id="status">INICIANDO...</div>
+
+<div id="radarWarning">
+    <span id="radarWarningDistance">-- M</span>
+    <span id="radarWarningLimit">RADAR</span>
+</div>
+
+<script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
+<script src="traffic-map.js"></script>
+
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const simulationButton =
+        document.getElementById("simulationButton");
+
+    const moveButton =
+        document.getElementById("moveButton");
+
+    const resetButton =
+        document.getElementById("resetButton");
+
+    const gpsButton =
+        document.getElementById("gpsButton");
+
+    const voiceButton =
+        document.getElementById("voiceButton");
+
+    const radarButton =
+        document.getElementById("radarButton");
+
+    const cameraButton =
+        document.getElementById("cameraButton");
+
+    const deadEndButton =
+        document.getElementById("deadEndButton");
+
+    const headingValue =
+        document.getElementById("headingValue");
+
+    const headingArrow =
+        document.getElementById("headingArrow");
+
+    const gpsState =
+        document.getElementById("gpsState");
+
+    function getTrafficMap() {
+        return window.TrafficMap || null;
+    }
+
+    function updateButtons() {
+        const trafficMap =
+            getTrafficMap();
+
+        if (!trafficMap) {
+            return;
+        }
+
+        const simulation =
+            trafficMap.simulation || {};
+
+        const alerts =
+            trafficMap.alerts || {
+                voice: true,
+                radar: true,
+                camera: true,
+                deadEnd: true
+            };
+
+        const orientation =
+            trafficMap.orientation || {};
+
+        simulationButton.classList.toggle(
+            "active",
+            simulation.active === true
+        );
+
+        moveButton.classList.toggle(
+            "active",
+            simulation.active === true
+        );
+
+        moveButton.disabled =
+            simulation.active !== true;
+
+        voiceButton.classList.toggle(
+            "active",
+            alerts.voice !== false
+        );
+
+        radarButton.classList.toggle(
+            "active",
+            alerts.radar !== false
+        );
+
+        cameraButton.classList.toggle(
+            "active",
+            alerts.camera !== false
+        );
+
+        deadEndButton.classList.toggle(
+            "active",
+            alerts.deadEnd !== false
+        );
+
+        const heading =
+            Number(
+                orientation.heading ??
+                simulation.heading ??
+                0
+            );
+
+        if (Number.isFinite(heading)) {
+            const normalized =
+                ((heading % 360) + 360) % 360;
+
+            headingValue.textContent =
+                `${Math.round(normalized)
+                    .toString()
+                    .padStart(3, "0")}°`;
+
+            headingArrow.style.transform =
+                `rotate(${normalized}deg)`;
+        }
+
+        if (orientation.active) {
+            gpsState.textContent =
+                "BRÚJULA ACTIVA";
+
+            gpsState.style.color =
+                "#8cecf3";
+        } else if (
+            trafficMap.locationActive === true
+        ) {
+            gpsState.textContent =
+                "GPS ACTIVO";
+
+            gpsState.style.color =
+                "#8cecf3";
+        } else {
+            gpsState.textContent =
+                "GPS OFF";
+
+            gpsState.style.color =
+                "#ff7b7b";
+        }
+    }
+
+    simulationButton.addEventListener(
+        "click",
+        async () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (!trafficMap) {
+                return;
+            }
+
+            try {
+                if (
+                    trafficMap.simulation &&
+                    trafficMap.simulation.active
+                ) {
+                    trafficMap.stopSimulation();
+                } else {
+                    await trafficMap.startSimulation();
+                }
+            } catch (error) {
+                console.error(error);
+            }
+
+            updateButtons();
+        }
+    );
+
+    moveButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (
+                !trafficMap ||
+                !trafficMap.simulation ||
+                !trafficMap.simulation.active
+            ) {
+                return;
+            }
+
+            trafficMap.simulationStep();
+
+            updateButtons();
+        }
+    );
+
+    resetButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (!trafficMap) {
+                return;
+            }
+
+            trafficMap.resetSimulation();
+
+            updateButtons();
+        }
+    );
+
+    gpsButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (!trafficMap) {
+                return;
+            }
+
+            trafficMap.requestLocation(true);
+
+            if (
+                typeof trafficMap.enableDeviceOrientation ===
+                "function"
+            ) {
+                trafficMap.enableDeviceOrientation();
+            }
+
+            updateButtons();
+        }
+    );
+
+    voiceButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (
+                !trafficMap ||
+                typeof trafficMap.setVoice !==
+                "function"
+            ) {
+                return;
+            }
+
+            const current =
+                trafficMap.alerts?.voice !== false;
+
+            trafficMap.setVoice(!current);
+
+            updateButtons();
+        }
+    );
+
+    radarButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (
+                !trafficMap ||
+                typeof trafficMap.setRadarAlerts !==
+                "function"
+            ) {
+                return;
+            }
+
+            const current =
+                trafficMap.alerts?.radar !== false;
+
+            trafficMap.setRadarAlerts(!current);
+
+            updateButtons();
+        }
+    );
+
+    cameraButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (
+                !trafficMap ||
+                typeof trafficMap.setCameraAlerts !==
+                "function"
+            ) {
+                return;
+            }
+
+            const current =
+                trafficMap.alerts?.camera !== false;
+
+            trafficMap.setCameraAlerts(!current);
+
+            updateButtons();
+        }
+    );
+
+    deadEndButton.addEventListener(
+        "click",
+        () => {
+            const trafficMap =
+                getTrafficMap();
+
+            if (
+                !trafficMap ||
+                typeof trafficMap.setDeadEndAlerts !==
+                "function"
+            ) {
+                return;
+            }
+
+            const current =
+                trafficMap.alerts?.deadEnd !== false;
+
+            trafficMap.setDeadEndAlerts(!current);
+
+            updateButtons();
+        }
+    );
+
+    setInterval(
+        updateButtons,
+        100
+    );
+
+    updateButtons();
+});
+</script>
+
+</body>
+</html>
