@@ -20,13 +20,22 @@
             refreshInterval: 300000
         },
 
+        cameras: {
+            sourceUrl: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
+            refreshInterval: 300000,
+            geocodeDelay: 1100,
+            geocodeZoom: 18,
+            concurrency: 1
+        },
+
         simulation: {
             stepMeters: 20,
             defaultSpeed: 5
         },
 
         services: {
-            overpass: "https://overpass-api.de/api/interpreter"
+            overpass: "https://overpass-api.de/api/interpreter",
+            nominatim: "https://nominatim.openstreetmap.org/search"
         }
     };
 
@@ -36,14 +45,19 @@
         userMarker: null,
         accuracyCircle: null,
         radarLayer: null,
+        cameraLayer: null,
         radars: [],
+        cameras: [],
         radarCount: 0,
+        cameraCount: 0,
         locationWatchId: null,
         locationActive: false,
         lastPosition: null,
         warningRadar: null,
         radarRefreshTimer: null,
+        cameraRefreshTimer: null,
         lastRadarQuery: null,
+        lastCameraLoad: 0,
         lastSpeech: 0,
 
         simulation: {
@@ -76,6 +90,12 @@
 
     function showStatus(message) {
         setText("status", message);
+    }
+
+    function sleep(ms) {
+        return new Promise(resolve => {
+            setTimeout(resolve, ms);
+        });
     }
 
     function distanceMeters(
@@ -272,6 +292,63 @@
         });
     }
 
+    function createCameraIcon() {
+        return L.divIcon({
+            className: "montevideo-camera-marker",
+
+            html: `
+                <div style="
+                    position:relative;
+                    width:34px;
+                    height:34px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    border-radius:50%;
+                    background:#2b1800;
+                    border:3px solid #ff9800;
+                    color:#ff9800;
+                    box-shadow:
+                        0 0 10px rgba(255,152,0,.95),
+                        0 0 24px rgba(255,152,0,.65);
+                ">
+                    <div style="
+                        position:relative;
+                        width:15px;
+                        height:10px;
+                        border-radius:3px;
+                        background:#ff9800;
+                        box-shadow:0 0 8px rgba(255,152,0,.9);
+                    ">
+                        <div style="
+                            position:absolute;
+                            right:-5px;
+                            top:2px;
+                            width:5px;
+                            height:6px;
+                            border-radius:1px;
+                            background:#ff9800;
+                        "></div>
+
+                        <div style="
+                            position:absolute;
+                            left:4px;
+                            top:2px;
+                            width:5px;
+                            height:5px;
+                            border-radius:50%;
+                            background:#2b1800;
+                            border:1px solid #2b1800;
+                        "></div>
+                    </div>
+                </div>
+            `,
+
+            iconSize: [34, 34],
+            iconAnchor: [17, 17]
+        });
+    }
+
     function initializeMap() {
         if (!window.L) {
             showStatus("LEAFLET NO DISPONIBLE");
@@ -292,14 +369,7 @@
                     zoom: CONFIG.map.defaultZoom,
                     zoomControl: true,
                     attributionControl: true,
-                    preferCanvas: true,
-                    dragging: true,
-                    touchZoom: true,
-                    scrollWheelZoom: true,
-                    doubleClickZoom: true,
-                    boxZoom: true,
-                    keyboard: true,
-                    tap: true
+                    preferCanvas: true
                 }
             );
 
@@ -313,6 +383,9 @@
         ).addTo(state.map);
 
         state.radarLayer =
+            L.layerGroup().addTo(state.map);
+
+        state.cameraLayer =
             L.layerGroup().addTo(state.map);
 
         state.map.on(
@@ -391,10 +464,6 @@
             return;
         }
 
-        if (state.simulation.active) {
-            return;
-        }
-
         const latitude =
             safeNumber(
                 position.coords.latitude
@@ -442,8 +511,7 @@
 
         updateUserMarker(
             latitude,
-            longitude,
-            speed
+            longitude
         );
 
         if (!state.simulation.active) {
@@ -474,7 +542,7 @@
         );
 
         showStatus(
-            `GPS ACTIVO · ${state.radarCount} RADARES`
+            `GPS ACTIVO · ${state.cameraCount} CÁMARAS · ${state.radarCount} RADARES`
         );
     }
 
@@ -517,8 +585,7 @@
                     [latitude, longitude],
                     {
                         icon: createUserIcon(),
-                        zIndexOffset: 1000,
-                        interactive: false
+                        zIndexOffset: 1000
                     }
                 )
                     .addTo(state.map)
@@ -563,6 +630,638 @@
         }
     }
 
+    async function loadOfficialCameras(force = false) {
+        const now = Date.now();
+
+        if (
+            !force &&
+            state.lastCameraLoad &&
+            now - state.lastCameraLoad <
+            30000
+        ) {
+            return;
+        }
+
+        state.lastCameraLoad = now;
+
+        showStatus("CARGANDO CÁMARAS OFICIALES...");
+
+        try {
+            const response =
+                await fetch(
+                    CONFIG.cameras.sourceUrl,
+                    {
+                        method: "GET",
+                        cache: "no-store",
+                        credentials: "omit"
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP ${response.status}`
+                );
+            }
+
+            const html =
+                await response.text();
+
+            const locations =
+                extractOfficialCameraLocations(
+                    html
+                );
+
+            if (!locations.length) {
+                throw new Error(
+                    "No se encontraron ubicaciones"
+                );
+            }
+
+            const cameras =
+                await geocodeCameraLocations(
+                    locations
+                );
+
+            state.cameras =
+                deduplicateCameras(
+                    cameras
+                );
+
+            state.cameraCount =
+                state.cameras.length;
+
+            renderOfficialCameras();
+
+            showStatus(
+                `${state.cameraCount} CÁMARAS OFICIALES`
+            );
+        } catch (error) {
+            console.error(
+                "[Cámaras]",
+                error
+            );
+
+            showStatus(
+                "ERROR CARGANDO CÁMARAS OFICIALES"
+            );
+        }
+    }
+
+    function extractOfficialCameraLocations(html) {
+        const parser =
+            new DOMParser();
+
+        const document =
+            parser.parseFromString(
+                html,
+                "text/html"
+            );
+
+        const headings =
+            Array.from(
+                document.querySelectorAll(
+                    "h1,h2,h3,h4,h5,h6"
+                )
+            );
+
+        const locations = [];
+
+        const excluded =
+            [
+                "Cámaras de monitoreo del tránsito"
+            ];
+
+        for (const heading of headings) {
+            const headingText =
+                normalizeText(
+                    heading.textContent
+                );
+
+            if (
+                !headingText ||
+                excluded.includes(
+                    headingText
+                )
+            ) {
+                continue;
+            }
+
+            let current =
+                heading.nextElementSibling;
+
+            let guard = 0;
+
+            while (
+                current &&
+                guard < 100
+                ) {
+                guard++;
+
+                if (
+                    /^H[1-6]$/i.test(
+                        current.tagName
+                    )
+                ) {
+                    break;
+                }
+
+                const items =
+                    Array.from(
+                        current.querySelectorAll(
+                            "li"
+                        )
+                    );
+
+                if (
+                    current.tagName === "LI"
+                ) {
+                    items.unshift(current);
+                }
+
+                for (const item of items) {
+                    const text =
+                        normalizeText(
+                            item.textContent
+                        );
+
+                    if (
+                        isCameraLocation(
+                            text
+                        )
+                    ) {
+                        locations.push({
+                            area:
+                            headingText,
+
+                            name:
+                                cleanCameraLocation(
+                                    text
+                                )
+                        });
+                    }
+                }
+
+                current =
+                    current.nextElementSibling;
+            }
+        }
+
+        if (!locations.length) {
+            const allText =
+                Array.from(
+                    document.querySelectorAll(
+                        "li"
+                    )
+                );
+
+            for (const item of allText) {
+                const text =
+                    normalizeText(
+                        item.textContent
+                    );
+
+                if (
+                    isCameraLocation(
+                        text
+                    )
+                ) {
+                    locations.push({
+                        area:
+                            "Montevideo",
+
+                        name:
+                            cleanCameraLocation(
+                                text
+                            )
+                    });
+                }
+            }
+        }
+
+        return uniqueLocationList(
+            locations
+        );
+    }
+
+    function normalizeText(value) {
+        return String(value || "")
+            .replace(/\u00a0/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function isCameraLocation(text) {
+        if (!text) {
+            return false;
+        }
+
+        if (text.length < 5) {
+            return false;
+        }
+
+        if (
+            text.length > 180
+        ) {
+            return false;
+        }
+
+        const lower =
+            text.toLowerCase();
+
+        const conjunction =
+            lower.includes(" y ");
+
+        const streetIndicators =
+            [
+                "av.",
+                "avenida",
+                "bulevar",
+                "bvar.",
+                "blvr.",
+                "rambla",
+                "camino",
+                "ruta ",
+                "calle ",
+                "gral.",
+                "general ",
+                "túnel",
+                "tunel"
+            ];
+
+        const hasStreetIndicator =
+            streetIndicators.some(
+                value =>
+                    lower.includes(value)
+            );
+
+        return (
+            conjunction &&
+            hasStreetIndicator
+        );
+    }
+
+    function cleanCameraLocation(text) {
+        return normalizeText(
+            text
+                .replace(/\.$/, "")
+        );
+    }
+
+    function uniqueLocationList(locations) {
+        const seen =
+            new Set();
+
+        const result = [];
+
+        for (const item of locations) {
+            const key =
+                item.name
+                    .toLowerCase();
+
+            if (
+                seen.has(key)
+            ) {
+                continue;
+            }
+
+            seen.add(key);
+
+            result.push(item);
+        }
+
+        return result;
+    }
+
+    async function geocodeCameraLocations(
+        locations
+    ) {
+        const result = [];
+
+        const cache =
+            loadGeocodeCache();
+
+        for (
+            let index = 0;
+            index < locations.length;
+            index++
+        ) {
+            const location =
+                locations[index];
+
+            const cacheKey =
+                location.name
+                    .toLowerCase();
+
+            let coordinates =
+                cache[cacheKey];
+
+            if (
+                !coordinates
+            ) {
+                showStatus(
+                    `GEOCODIFICANDO CÁMARAS ${index + 1}/${locations.length}`
+                );
+
+                coordinates =
+                    await geocodeLocation(
+                        location.name
+                    );
+
+                if (coordinates) {
+                    cache[cacheKey] =
+                        coordinates;
+
+                    saveGeocodeCache(
+                        cache
+                    );
+                }
+
+                await sleep(
+                    CONFIG.cameras.geocodeDelay
+                );
+            }
+
+            if (
+                !coordinates
+            ) {
+                continue;
+            }
+
+            result.push({
+                id:
+                    `imm-${hashString(
+                        location.name
+                    )}`,
+
+                latitude:
+                coordinates.latitude,
+
+                longitude:
+                coordinates.longitude,
+
+                name:
+                location.name,
+
+                area:
+                location.area,
+
+                source:
+                    "Intendencia de Montevideo",
+
+                sourceUrl:
+                CONFIG.cameras.sourceUrl
+            });
+        }
+
+        return result;
+    }
+
+    async function geocodeLocation(
+        location
+    ) {
+        const queries = [
+            `${location}, Montevideo, Uruguay`,
+            `${location}, Montevideo`,
+            `${location}, Uruguay`
+        ];
+
+        for (const query of queries) {
+            try {
+                const url =
+                    new URL(
+                        CONFIG.services.nominatim
+                    );
+
+                url.searchParams.set(
+                    "q",
+                    query
+                );
+
+                url.searchParams.set(
+                    "format",
+                    "json"
+                );
+
+                url.searchParams.set(
+                    "limit",
+                    "1"
+                );
+
+                url.searchParams.set(
+                    "countrycodes",
+                    "uy"
+                );
+
+                url.searchParams.set(
+                    "addressdetails",
+                    "0"
+                );
+
+                const response =
+                    await fetch(
+                        url.toString(),
+                        {
+                            method: "GET",
+                            cache: "no-store",
+                            headers: {
+                                "Accept":
+                                    "application/json"
+                            }
+                        }
+                    );
+
+                if (
+                    !response.ok
+                ) {
+                    continue;
+                }
+
+                const data =
+                    await response.json();
+
+                if (
+                    !Array.isArray(data) ||
+                    !data.length
+                ) {
+                    continue;
+                }
+
+                const latitude =
+                    Number(
+                        data[0].lat
+                    );
+
+                const longitude =
+                    Number(
+                        data[0].lon
+                    );
+
+                if (
+                    !Number.isFinite(
+                        latitude
+                    ) ||
+                    !Number.isFinite(
+                        longitude
+                    )
+                ) {
+                    continue;
+                }
+
+                return {
+                    latitude,
+                    longitude
+                };
+            } catch (error) {
+                console.warn(
+                    "[Geocoding]",
+                    location,
+                    error
+                );
+            }
+        }
+
+        return null;
+    }
+
+    function loadGeocodeCache() {
+        try {
+            const value =
+                localStorage.getItem(
+                    "montevideo_camera_geocode_cache"
+                );
+
+            if (!value) {
+                return {};
+            }
+
+            const parsed =
+                JSON.parse(value);
+
+            return parsed &&
+            typeof parsed === "object"
+                ? parsed
+                : {};
+        } catch (error) {
+            return {};
+        }
+    }
+
+    function saveGeocodeCache(cache) {
+        try {
+            localStorage.setItem(
+                "montevideo_camera_geocode_cache",
+                JSON.stringify(cache)
+            );
+        } catch (error) {
+        }
+    }
+
+    function hashString(value) {
+        let hash = 0;
+
+        const text =
+            String(value);
+
+        for (
+            let index = 0;
+            index < text.length;
+            index++
+        ) {
+            hash =
+                (
+                    (
+                        hash << 5
+                    ) -
+                    hash +
+                    text.charCodeAt(index)
+                ) |
+                0;
+        }
+
+        return Math.abs(hash);
+    }
+
+    function deduplicateCameras(
+        cameras
+    ) {
+        const unique = [];
+
+        for (const camera of cameras) {
+            const exists =
+                unique.some(
+                    item =>
+                        distanceMeters(
+                            item.latitude,
+                            item.longitude,
+                            camera.latitude,
+                            camera.longitude
+                        ) < 12
+                );
+
+            if (!exists) {
+                unique.push(camera);
+            }
+        }
+
+        return unique;
+    }
+
+    function renderOfficialCameras() {
+        if (!state.cameraLayer) {
+            return;
+        }
+
+        state.cameraLayer.clearLayers();
+
+        state.cameras.forEach(
+            camera => {
+                const marker =
+                    L.marker(
+                        [
+                            camera.latitude,
+                            camera.longitude
+                        ],
+                        {
+                            icon:
+                                createCameraIcon(),
+
+                            zIndexOffset:
+                                300
+                        }
+                    );
+
+                marker.bindPopup(`
+                    <div style="
+                        font-family:monospace;
+                        color:#111;
+                        min-width:210px;
+                    ">
+                        <strong>CÁMARA DE MONITOREO</strong>
+                        <br>
+                        ${escapeHtml(camera.name)}
+                        <br>
+                        <span style="color:#d97700">
+                            INTENDENCIA DE MONTEVIDEO
+                        </span>
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.cameraLayer
+                );
+            }
+        );
+    }
+
+    function escapeHtml(value) {
+        return String(value || "")
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
+    }
+
     async function loadRadars(
         latitude,
         longitude
@@ -578,7 +1277,8 @@
 
         if (
             state.lastRadarQuery &&
-            now - state.lastRadarQuery < 30000
+            now - state.lastRadarQuery <
+            30000
         ) {
             return;
         }
@@ -615,7 +1315,9 @@ out center tags;
 
                         body:
                             "data=" +
-                            encodeURIComponent(query)
+                            encodeURIComponent(
+                                query
+                            )
                     }
                 );
 
@@ -641,7 +1343,7 @@ out center tags;
             renderRadars();
 
             showStatus(
-                `RADARES ACTIVOS · ${state.radarCount}`
+                `${state.cameraCount} CÁMARAS · ${state.radarCount} RADARES`
             );
         } catch (error) {
             console.error(
@@ -663,24 +1365,45 @@ out center tags;
             let longitude = null;
 
             if (
-                Number.isFinite(Number(element.lat)) &&
-                Number.isFinite(Number(element.lon))
+                Number.isFinite(
+                    Number(element.lat)
+                ) &&
+                Number.isFinite(
+                    Number(element.lon)
+                )
             ) {
-                latitude = Number(element.lat);
-                longitude = Number(element.lon);
-            } else if (element.center) {
-                latitude = Number(element.center.lat);
-                longitude = Number(element.center.lon);
+                latitude =
+                    Number(element.lat);
+
+                longitude =
+                    Number(element.lon);
+            } else if (
+                element.center
+            ) {
+                latitude =
+                    Number(
+                        element.center.lat
+                    );
+
+                longitude =
+                    Number(
+                        element.center.lon
+                    );
             }
 
             if (
-                !Number.isFinite(latitude) ||
-                !Number.isFinite(longitude)
+                !Number.isFinite(
+                    latitude
+                ) ||
+                !Number.isFinite(
+                    longitude
+                )
             ) {
                 continue;
             }
 
-            const tags = element.tags || {};
+            const tags =
+                element.tags || {};
 
             const limit =
                 parseSpeedLimit(
@@ -691,17 +1414,19 @@ out center tags;
                 );
 
             result.push({
-                id: String(
-                    element.id ??
-                    `${latitude}:${longitude}`
-                ),
+                id:
+                    String(
+                        element.id ??
+                        `${latitude}:${longitude}`
+                    ),
 
                 latitude,
                 longitude,
                 limit,
 
                 direction:
-                    tags.direction || null,
+                    tags.direction ||
+                    null,
 
                 name:
                     tags.name ||
@@ -732,10 +1457,14 @@ out center tags;
             return null;
         }
 
-        return Number(match[1]);
+        return Number(
+            match[1]
+        );
     }
 
-    function deduplicateRadars(radars) {
+    function deduplicateRadars(
+        radars
+    ) {
         const unique = [];
 
         for (const radar of radars) {
@@ -824,7 +1553,8 @@ out center tags;
 
             if (
                 !closest ||
-                distance < closest.distance
+                distance <
+                closest.distance
             ) {
                 closest = {
                     radar,
@@ -878,10 +1608,14 @@ out center tags;
         }
 
         const distanceElement =
-            byId("radarWarningDistance");
+            byId(
+                "radarWarningDistance"
+            );
 
         const limitElement =
-            byId("radarWarningLimit");
+            byId(
+                "radarWarningLimit"
+            );
 
         const rounded =
             Math.max(
@@ -901,7 +1635,9 @@ out center tags;
                     : "LÍMITE NO DISPONIBLE";
         }
 
-        warning.classList.add("active");
+        warning.classList.add(
+            "active"
+        );
 
         speakRadarWarning(
             radar,
@@ -913,19 +1649,24 @@ out center tags;
         radar,
         distance
     ) {
-        if (!("speechSynthesis" in window)) {
-            return;
-        }
-
-        const now = Date.now();
-
         if (
-            now - state.lastSpeech < 10000
+            !("speechSynthesis" in window)
         ) {
             return;
         }
 
-        state.lastSpeech = now;
+        const now =
+            Date.now();
+
+        if (
+            now - state.lastSpeech <
+            10000
+        ) {
+            return;
+        }
+
+        state.lastSpeech =
+            now;
 
         const text =
             radar.limit
@@ -940,7 +1681,9 @@ out center tags;
                     text
                 );
 
-            utterance.lang = "es-ES";
+            utterance.lang =
+                "es-ES";
+
             utterance.rate = 1;
             utterance.pitch = 1;
 
@@ -965,7 +1708,8 @@ out center tags;
             );
         }
 
-        state.warningRadar = null;
+        state.warningRadar =
+            null;
     }
 
     function startSimulation() {
@@ -990,11 +1734,15 @@ out center tags;
                             CONFIG.map.defaultCenter[1]
                     };
 
-            latitude = center.lat;
-            longitude = center.lng;
+            latitude =
+                center.lat;
+
+            longitude =
+                center.lng;
         }
 
-        state.simulation.active = true;
+        state.simulation.active =
+            true;
 
         state.simulation.latitude =
             latitude;
@@ -1010,8 +1758,11 @@ out center tags;
         state.simulation.speed =
             CONFIG.simulation.defaultSpeed;
 
-        state.simulation.radar = null;
-        state.simulation.distance = null;
+        state.simulation.radar =
+            null;
+
+        state.simulation.distance =
+            null;
 
         updateUserMarker(
             latitude,
@@ -1031,7 +1782,9 @@ out center tags;
             );
         }
 
-        showStatus("MODO PRUEBA ACTIVO");
+        showStatus(
+            "MODO PRUEBA ACTIVO"
+        );
 
         updateSimulationUI();
 
@@ -1039,9 +1792,14 @@ out center tags;
     }
 
     function stopSimulation() {
-        state.simulation.active = false;
-        state.simulation.radar = null;
-        state.simulation.distance = null;
+        state.simulation.active =
+            false;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.distance =
+            null;
 
         hideRadarWarning();
 
@@ -1055,7 +1813,9 @@ out center tags;
     }
 
     function simulationStep() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
@@ -1080,7 +1840,9 @@ out center tags;
     }
 
     function updateSimulationPosition() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
@@ -1099,10 +1861,25 @@ out center tags;
         );
 
         updateSimulationUI();
+
+        if (state.map) {
+            state.map.panTo(
+                [
+                    simulation.latitude,
+                    simulation.longitude
+                ],
+                {
+                    animate: true,
+                    duration: .25
+                }
+            );
+        }
     }
 
     function updateSimulationUI() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
@@ -1131,7 +1908,9 @@ out center tags;
     }
 
     function resetSimulation() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
@@ -1148,8 +1927,11 @@ out center tags;
             const center =
                 state.map.getCenter();
 
-            latitude = center.lat;
-            longitude = center.lng;
+            latitude =
+                center.lat;
+
+            longitude =
+                center.lng;
         }
 
         state.simulation.latitude =
@@ -1163,8 +1945,11 @@ out center tags;
                 state.lastPosition?.heading
             ) || 0;
 
-        state.simulation.radar = null;
-        state.simulation.distance = null;
+        state.simulation.radar =
+            null;
+
+        state.simulation.distance =
+            null;
 
         hideRadarWarning();
 
@@ -1184,11 +1969,15 @@ out center tags;
             }
         );
 
-        showStatus("MODO PRUEBA REINICIADO");
+        showStatus(
+            "MODO PRUEBA REINICIADO"
+        );
     }
 
     function startRadarRefresh() {
-        if (state.radarRefreshTimer) {
+        if (
+            state.radarRefreshTimer
+        ) {
             clearInterval(
                 state.radarRefreshTimer
             );
@@ -1201,10 +1990,9 @@ out center tags;
                         state.simulation.active
                             ? {
                                 latitude:
-                                    state.simulation.latitude,
-
+                                state.simulation.latitude,
                                 longitude:
-                                    state.simulation.longitude
+                                state.simulation.longitude
                             }
                             : state.lastPosition;
 
@@ -1221,19 +2009,42 @@ out center tags;
             );
     }
 
+    function startCameraRefresh() {
+        if (
+            state.cameraRefreshTimer
+        ) {
+            clearInterval(
+                state.cameraRefreshTimer
+            );
+        }
+
+        state.cameraRefreshTimer =
+            setInterval(
+                () => {
+                    loadOfficialCameras(
+                        true
+                    );
+                },
+                CONFIG.cameras.refreshInterval
+            );
+    }
+
     function initialize() {
-        if (state.initialized) {
+        if (
+            state.initialized
+        ) {
             return;
         }
 
-        state.initialized = true;
+        state.initialized =
+            true;
 
         if (!initializeMap()) {
             return;
         }
 
         showStatus(
-            "RADAR ONLINE · OBTENIENDO GPS"
+            "RADAR ONLINE · CARGANDO CÁMARAS"
         );
 
         requestLocation();
@@ -1243,7 +2054,13 @@ out center tags;
             CONFIG.map.defaultCenter[1]
         );
 
+        loadOfficialCameras(
+            true
+        );
+
         startRadarRefresh();
+
+        startCameraRefresh();
 
         setTimeout(
             () => {
@@ -1269,8 +2086,16 @@ out center tags;
             return state.radarCount;
         },
 
+        get cameraCount() {
+            return state.cameraCount;
+        },
+
         get radars() {
             return state.radars;
+        },
+
+        get cameras() {
+            return state.cameras;
         },
 
         get simulation() {
@@ -1297,6 +2122,8 @@ out center tags;
 
         updateSimulationUI,
 
+        loadOfficialCameras,
+
         showStatus,
 
         invalidateSize() {
@@ -1304,7 +2131,10 @@ out center tags;
         }
     };
 
-    if (document.readyState === "loading") {
+    if (
+        document.readyState ===
+        "loading"
+    ) {
         document.addEventListener(
             "DOMContentLoaded",
             initialize,
