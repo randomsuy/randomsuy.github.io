@@ -16,12 +16,15 @@
 
         radar: {
             warningDistance: 300,
+            queryRadius: 50000,
             refreshInterval: 300000
         },
 
         cameras: {
+            sourceUrl: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
             refreshInterval: 900000,
-            geocodeDelay: 250
+            geocodeDelay: 180,
+            geocodeRadius: 100
         },
 
         simulation: {
@@ -30,11 +33,14 @@
         },
 
         services: {
-            ckanApi: "https://ckan.montevideo.gub.uy/api/3/action/package_show?id=ubicacion-de-sensores-de-medicion-de-conteo-vehiculos",
-            officialCameraPage: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
-            pageProxy: "https://r.jina.ai/https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
-            geocoder: "https://geocode.maps.co/search",
-            arcgisGeocoder: "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates"
+            overpass: "https://overpass-api.de/api/interpreter",
+            nominatim: "https://nominatim.openstreetmap.org/search"
+        },
+
+        alerts: {
+            voice: true,
+            vibration: true,
+            cooldown: 10000
         }
     };
 
@@ -43,29 +49,27 @@
         map: null,
         userMarker: null,
         accuracyCircle: null,
-
         radarLayer: null,
         cameraLayer: null,
-
         radars: [],
         cameras: [],
-
         radarCount: 0,
         cameraCount: 0,
-
         locationWatchId: null,
         locationActive: false,
         lastPosition: null,
-
         warningRadar: null,
+        warningCamera: null,
         radarRefreshTimer: null,
         cameraRefreshTimer: null,
-
         lastRadarQuery: 0,
-        lastCameraQuery: 0,
         lastSpeech: 0,
-
-        geocodeCache: {},
+        lastVibration: 0,
+        cameraLoading: false,
+        radarLoading: false,
+        geocodeCache: new Map(),
+        voices: [],
+        preferredVoice: null,
 
         simulation: {
             active: false,
@@ -89,7 +93,6 @@
 
     function setText(id, value) {
         const element = byId(id);
-
         if (element) {
             element.textContent = String(value);
         }
@@ -99,24 +102,17 @@
         setText("status", message);
     }
 
-    function distanceMeters(
-        latitude1,
-        longitude1,
-        latitude2,
-        longitude2
-    ) {
+    function distanceMeters(latitude1, longitude1, latitude2, longitude2) {
         const R = 6371000;
 
         const lat1 = Number(latitude1) * Math.PI / 180;
         const lat2 = Number(latitude2) * Math.PI / 180;
 
         const deltaLat =
-            (Number(latitude2) - Number(latitude1)) *
-            Math.PI / 180;
+            (Number(latitude2) - Number(latitude1)) * Math.PI / 180;
 
         const deltaLng =
-            (Number(longitude2) - Number(longitude1)) *
-            Math.PI / 180;
+            (Number(longitude2) - Number(longitude1)) * Math.PI / 180;
 
         const a =
             Math.sin(deltaLat / 2) ** 2 +
@@ -134,25 +130,17 @@
         return R * c;
     }
 
-    function destinationPoint(
-        latitude,
-        longitude,
-        bearing,
-        distance
-    ) {
+    function destinationPoint(latitude, longitude, bearing, distance) {
         const R = 6371000;
 
         const lat1 =
-            Number(latitude) *
-            Math.PI / 180;
+            Number(latitude) * Math.PI / 180;
 
         const lon1 =
-            Number(longitude) *
-            Math.PI / 180;
+            Number(longitude) * Math.PI / 180;
 
         const theta =
-            Number(bearing) *
-            Math.PI / 180;
+            Number(bearing) * Math.PI / 180;
 
         const delta =
             Number(distance) / R;
@@ -178,15 +166,8 @@
             );
 
         return {
-            latitude:
-                lat2 *
-                180 /
-                Math.PI,
-
-            longitude:
-                lon2 *
-                180 /
-                Math.PI
+            latitude: lat2 * 180 / Math.PI,
+            longitude: lon2 * 180 / Math.PI
         };
     }
 
@@ -222,6 +203,7 @@
             className: "keolel-radar-marker",
             html: `
                 <div style="
+                    position:relative;
                     width:38px;
                     height:38px;
                     display:flex;
@@ -251,43 +233,23 @@
             className: "keolel-camera-marker",
             html: `
                 <div style="
-                    position:relative;
-                    width:36px;
-                    height:36px;
+                    width:34px;
+                    height:34px;
                     display:flex;
                     align-items:center;
                     justify-content:center;
                     border-radius:50%;
-                    background:#2a1600;
+                    background:#241700;
                     border:2px solid #ff9800;
                     color:#ff9800;
-                    font-size:18px;
+                    font-size:17px;
                     box-shadow:
-                        0 0 12px rgba(255,152,0,.9),
-                        0 0 28px rgba(255,152,0,.4);
-                ">
-                    <span style="
-                        display:block;
-                        width:16px;
-                        height:11px;
-                        border:2px solid #ff9800;
-                        border-radius:3px;
-                        position:relative;
-                    ">
-                        <span style="
-                            position:absolute;
-                            width:5px;
-                            height:5px;
-                            border-radius:50%;
-                            background:#ff9800;
-                            left:4px;
-                            top:1px;
-                        "></span>
-                    </span>
-                </div>
+                        0 0 10px rgba(255,152,0,.85),
+                        0 0 24px rgba(255,152,0,.35);
+                ">●</div>
             `,
-            iconSize: [36, 36],
-            iconAnchor: [18, 18]
+            iconSize: [34, 34],
+            iconAnchor: [17, 17]
         });
     }
 
@@ -303,17 +265,16 @@
             return false;
         }
 
-        state.map =
-            L.map(
-                mapElement,
-                {
-                    center: CONFIG.map.defaultCenter,
-                    zoom: CONFIG.map.defaultZoom,
-                    zoomControl: true,
-                    attributionControl: true,
-                    preferCanvas: true
-                }
-            );
+        state.map = L.map(
+            mapElement,
+            {
+                center: CONFIG.map.defaultCenter,
+                zoom: CONFIG.map.defaultZoom,
+                zoomControl: true,
+                attributionControl: true,
+                preferCanvas: true
+            }
+        );
 
         L.tileLayer(
             "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -373,11 +334,10 @@
     }
 
     function startLocationWatch() {
-        if (state.locationWatchId !== null) {
-            return;
-        }
-
-        if (!navigator.geolocation) {
+        if (
+            state.locationWatchId !== null ||
+            !navigator.geolocation
+        ) {
             return;
         }
 
@@ -387,6 +347,18 @@
                 handlePositionError,
                 CONFIG.gps
             );
+    }
+
+    function stopLocationWatch() {
+        if (state.locationWatchId === null) {
+            return;
+        }
+
+        navigator.geolocation.clearWatch(
+            state.locationWatchId
+        );
+
+        state.locationWatchId = null;
     }
 
     function handlePosition(position) {
@@ -401,16 +373,10 @@
             safeNumber(position.coords.longitude);
 
         const accuracy =
-            safeNumber(
-                position.coords.accuracy,
-                0
-            );
+            safeNumber(position.coords.accuracy, 0);
 
         const speed =
-            safeNumber(
-                position.coords.speed,
-                0
-            );
+            safeNumber(position.coords.speed, 0);
 
         let heading =
             Number(position.coords.heading);
@@ -464,12 +430,19 @@
             longitude
         );
 
+        checkCameras(
+            latitude,
+            longitude
+        );
+
         showStatus(
             `GPS ACTIVO · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`
         );
     }
 
     function handlePositionError(error) {
+        console.warn("[GPS]", error);
+
         state.locationActive = false;
 
         let message = "ERROR DE GPS";
@@ -489,10 +462,7 @@
         showStatus(message);
     }
 
-    function updateUserMarker(
-        latitude,
-        longitude
-    ) {
+    function updateUserMarker(latitude, longitude) {
         if (!state.map) {
             return;
         }
@@ -567,226 +537,142 @@
         return Number(match[1]);
     }
 
-    function normalizeRadarRows(rows) {
-        const result = [];
-
-        for (const row of rows) {
-            const keys =
-                Object.keys(row);
-
-            let latitude = null;
-            let longitude = null;
-            let limit = null;
-
-            for (const key of keys) {
-                const lower =
-                    key.toLowerCase();
-
-                const value =
-                    row[key];
-
-                if (
-                    latitude === null &&
-                    (
-                        lower.includes("lat") ||
-                        lower === "y"
-                    )
-                ) {
-                    const n =
-                        Number(
-                            String(value)
-                                .replace(",", ".")
-                        );
-
-                    if (
-                        Number.isFinite(n) &&
-                        Math.abs(n) <= 90
-                    ) {
-                        latitude = n;
-                    }
-                }
-
-                if (
-                    longitude === null &&
-                    (
-                        lower.includes("lon") ||
-                        lower.includes("lng") ||
-                        lower === "x"
-                    )
-                ) {
-                    const n =
-                        Number(
-                            String(value)
-                                .replace(",", ".")
-                        );
-
-                    if (
-                        Number.isFinite(n) &&
-                        Math.abs(n) <= 180
-                    ) {
-                        longitude = n;
-                    }
-                }
-
-                if (
-                    limit === null &&
-                    (
-                        lower.includes("velocidad") ||
-                        lower.includes("maxspeed") ||
-                        lower.includes("limite") ||
-                        lower.includes("límite")
-                    )
-                ) {
-                    limit =
-                        parseSpeedLimit(value);
-                }
-            }
-
-            if (
-                Number.isFinite(latitude) &&
-                Number.isFinite(longitude)
-            ) {
-                result.push({
-                    id:
-                        `${latitude}:${longitude}:${result.length}`,
-                    latitude,
-                    longitude,
-                    limit,
-                    name:
-                        row.nombre ||
-                        row.Nombre ||
-                        row.radar ||
-                        row.Radar ||
-                        "RADAR DE VELOCIDAD",
-                    source:
-                        "Intendencia de Montevideo"
-                });
-            }
+    async function loadRadars(latitude, longitude) {
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude) ||
+            state.radarLoading
+        ) {
+            return;
         }
 
-        return result;
-    }
+        const now = Date.now();
 
-    function parseCSV(text) {
-        const lines = [];
-        let current = "";
-        let insideQuotes = false;
-
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-
-            if (char === '"') {
-                if (
-                    insideQuotes &&
-                    text[i + 1] === '"'
-                ) {
-                    current += '"';
-                    i++;
-                } else {
-                    insideQuotes =
-                        !insideQuotes;
-                    current += char;
-                }
-            } else if (
-                (
-                    char === "\n" ||
-                    char === "\r"
-                ) &&
-                !insideQuotes
-            ) {
-                if (current.trim()) {
-                    lines.push(current);
-                }
-
-                current = "";
-
-                if (
-                    char === "\r" &&
-                    text[i + 1] === "\n"
-                ) {
-                    i++;
-                }
-            } else {
-                current += char;
-            }
+        if (
+            state.lastRadarQuery &&
+            now - state.lastRadarQuery < 30000
+        ) {
+            return;
         }
 
-        if (current.trim()) {
-            lines.push(current);
-        }
+        state.lastRadarQuery = now;
+        state.radarLoading = true;
 
-        if (!lines.length) {
-            return [];
-        }
+        const query = `
+[out:json][timeout:25];
+node["highway"="speed_camera"](around:${CONFIG.radar.queryRadius},${latitude},${longitude});
+out body;
+`;
 
-        const delimiter =
-            lines[0].includes(";")
-                ? ";"
-                : ",";
-
-        function splitCSV(line) {
-            const result = [];
-            let value = "";
-            let quoted = false;
-
-            for (let i = 0; i < line.length; i++) {
-                const char = line[i];
-
-                if (char === '"') {
-                    if (
-                        quoted &&
-                        line[i + 1] === '"'
-                    ) {
-                        value += '"';
-                        i++;
-                    } else {
-                        quoted = !quoted;
-                    }
-                } else if (
-                    char === delimiter &&
-                    !quoted
-                ) {
-                    result.push(
-                        value.trim()
-                    );
-                    value = "";
-                } else {
-                    value += char;
-                }
-            }
-
-            result.push(
-                value.trim()
-            );
-
-            return result;
-        }
-
-        const headers =
-            splitCSV(lines[0]).map(
-                header =>
-                    header
-                        .replace(/^\uFEFF/, "")
-                        .trim()
-            );
-
-        return lines
-            .slice(1)
-            .map(line => {
-                const values =
-                    splitCSV(line);
-
-                const row = {};
-
-                headers.forEach(
-                    (header, index) => {
-                        row[header] =
-                            values[index] ?? "";
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.overpass,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded;charset=UTF-8"
+                        },
+                        body:
+                            "data=" +
+                            encodeURIComponent(query)
                     }
                 );
 
-                return row;
+            if (!response.ok) {
+                throw new Error(
+                    `Overpass HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            const elements =
+                Array.isArray(data?.elements)
+                    ? data.elements
+                    : [];
+
+            state.radars =
+                deduplicateRadars(
+                    normalizeRadarData(elements)
+                );
+
+            state.radarCount =
+                state.radars.length;
+
+            renderRadars();
+
+            showStatus(
+                `RADARES ${state.radarCount} · CÁMARAS ${state.cameraCount}`
+            );
+        } catch (error) {
+            console.error(
+                "[Radar]",
+                error
+            );
+
+            showStatus(
+                `RADARES ${state.radarCount} · ERROR ACTUALIZANDO`
+            );
+        } finally {
+            state.radarLoading = false;
+        }
+    }
+
+    function normalizeRadarData(elements) {
+        const result = [];
+
+        for (const element of elements) {
+            const latitude =
+                Number(element.lat);
+
+            const longitude =
+                Number(element.lon);
+
+            if (
+                !Number.isFinite(latitude) ||
+                !Number.isFinite(longitude)
+            ) {
+                continue;
+            }
+
+            const tags =
+                element.tags || {};
+
+            const limit =
+                parseSpeedLimit(
+                    tags.maxspeed ||
+                    tags.maxspeed_forward ||
+                    tags.maxspeed_backward ||
+                    null
+                );
+
+            result.push({
+                id:
+                    String(
+                        element.id ??
+                        `${latitude}:${longitude}`
+                    ),
+
+                latitude,
+                longitude,
+                limit,
+
+                direction:
+                    tags.direction || null,
+
+                name:
+                    tags.name ||
+                    "RADAR DE VELOCIDAD",
+
+                source:
+                    "OpenStreetMap"
             });
+        }
+
+        return result;
     }
 
     function deduplicateRadars(radars) {
@@ -801,7 +687,7 @@
                             item.longitude,
                             radar.latitude,
                             radar.longitude
-                        ) < 20
+                        ) < 30
                 );
 
             if (!exists) {
@@ -812,170 +698,6 @@
         return unique;
     }
 
-    async function getLatestRadarResource() {
-        const response =
-            await fetch(
-                CONFIG.services.ckanApi,
-                {
-                    cache: "no-store"
-                }
-            );
-
-        if (!response.ok) {
-            throw new Error(
-                `CKAN HTTP ${response.status}`
-            );
-        }
-
-        const json =
-            await response.json();
-
-        if (
-            !json.success ||
-            !json.result
-        ) {
-            throw new Error(
-                "CKAN DATASET INVÁLIDO"
-            );
-        }
-
-        const resources =
-            Array.isArray(
-                json.result.resources
-            )
-                ? json.result.resources
-                : [];
-
-        const radarResources =
-            resources.filter(
-                resource => {
-                    const name =
-                        String(
-                            resource.name ||
-                            resource.description ||
-                            ""
-                        ).toLowerCase();
-
-                    return (
-                        name.includes("radar") &&
-                        (
-                            String(
-                                resource.format ||
-                                ""
-                            ).toLowerCase() === "csv" ||
-                            String(
-                                resource.url ||
-                                ""
-                            ).toLowerCase().includes(".csv")
-                        )
-                    );
-                }
-            );
-
-        if (!radarResources.length) {
-            throw new Error(
-                "NO HAY RECURSO DE RADARES"
-            );
-        }
-
-        radarResources.sort(
-            (a, b) => {
-                const da =
-                    new Date(
-                        a.created ||
-                        a.last_modified ||
-                        0
-                    ).getTime();
-
-                const db =
-                    new Date(
-                        b.created ||
-                        b.last_modified ||
-                        0
-                    ).getTime();
-
-                return db - da;
-            }
-        );
-
-        return radarResources[0];
-    }
-
-    async function loadRadars() {
-        const now = Date.now();
-
-        if (
-            state.lastRadarQuery &&
-            now - state.lastRadarQuery <
-            30000
-        ) {
-            return;
-        }
-
-        state.lastRadarQuery = now;
-
-        showStatus(
-            "CARGANDO RADARES OFICIALES..."
-        );
-
-        try {
-            const resource =
-                await getLatestRadarResource();
-
-            const response =
-                await fetch(
-                    resource.url,
-                    {
-                        cache: "no-store"
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `CSV HTTP ${response.status}`
-                );
-            }
-
-            const text =
-                await response.text();
-
-            const rows =
-                parseCSV(text);
-
-            const radars =
-                normalizeRadarRows(rows);
-
-            if (!radars.length) {
-                throw new Error(
-                    "CSV SIN COORDENADAS"
-                );
-            }
-
-            state.radars =
-                deduplicateRadars(
-                    radars
-                );
-
-            state.radarCount =
-                state.radars.length;
-
-            renderRadars();
-
-            showStatus(
-                `RADARES OFICIALES · ${state.radarCount}`
-            );
-        } catch (error) {
-            console.error(
-                "RADARES:",
-                error
-            );
-
-            showStatus(
-                "ERROR CARGANDO RADARES OFICIALES"
-            );
-        }
-    }
-
     function renderRadars() {
         if (!state.radarLayer) {
             return;
@@ -983,470 +705,47 @@
 
         state.radarLayer.clearLayers();
 
-        state.radars.forEach(
-            radar => {
-                const marker =
-                    L.marker(
-                        [
-                            radar.latitude,
-                            radar.longitude
-                        ],
-                        {
-                            icon:
-                                createRadarIcon(
-                                    radar.limit
-                                )
-                        }
-                    );
-
-                const limitText =
-                    radar.limit
-                        ? `${radar.limit} KM/H`
-                        : "LÍMITE NO DISPONIBLE";
-
-                marker.bindPopup(`
-                    <div style="
-                        font-family:monospace;
-                        color:#111;
-                        min-width:190px;
-                    ">
-                        <strong>RADAR OFICIAL</strong>
-                        <br>
-                        LÍMITE: ${limitText}
-                        <br>
-                        FUENTE: INTENDENCIA DE MONTEVIDEO
-                    </div>
-                `);
-
-                marker.addTo(
-                    state.radarLayer
-                );
-            }
-        );
-    }
-
-    function cleanCameraName(value) {
-        return String(value || "")
-            .replace(/\u00a0/g, " ")
-            .replace(/\s+/g, " ")
-            .replace(/^\s*[-•]\s*/, "")
-            .trim();
-    }
-
-    function isCameraLocation(value) {
-        const text =
-            cleanCameraName(value);
-
-        if (!text) {
-            return false;
-        }
-
-        if (text.length < 8) {
-            return false;
-        }
-
-        if (
-            text.includes("Las filmaciones") ||
-            text.includes("solicitar") ||
-            text.includes("derechoalainformacion")
-        ) {
-            return false;
-        }
-
-        return (
-            text.includes(" y ") ||
-            text.includes("Túnel") ||
-            text.includes("Tunel") ||
-            text.includes("Ruta ") ||
-            text.includes("Camino ") ||
-            text.includes("Rambla") ||
-            text.includes("Av.") ||
-            text.includes("Bv.") ||
-            text.includes("18 de Julio") ||
-            text.includes("26 de Marzo")
-        );
-    }
-
-    function extractCameraLocations(text) {
-        const result = [];
-        const seen = new Set();
-
-        const lines =
-            String(text)
-                .split("\n")
-                .map(cleanCameraName)
-                .filter(Boolean);
-
-        for (const line of lines) {
-            let candidate = line;
-
-            if (
-                candidate.startsWith("-")
-            ) {
-                candidate =
-                    candidate
-                        .replace(
-                            /^-\s*/,
-                            ""
-                        )
-                        .trim();
-            }
-
-            if (
-                candidate.startsWith("*")
-            ) {
-                candidate =
-                    candidate
-                        .replace(
-                            /^\*\s*/,
-                            ""
-                        )
-                        .trim();
-            }
-
-            if (
-                !isCameraLocation(
-                    candidate
-                )
-            ) {
-                continue;
-            }
-
-            const key =
-                candidate
-                    .toLowerCase()
-                    .replace(
-                        /[.,]/g,
-                        ""
-                    );
-
-            if (seen.has(key)) {
-                continue;
-            }
-
-            seen.add(key);
-
-            result.push({
-                id:
-                    `camera-${result.length}-${key}`,
-                name: candidate,
-                query:
-                    `${candidate}, Montevideo, Uruguay`,
-                latitude: null,
-                longitude: null,
-                source:
-                    CONFIG.services.officialCameraPage
-            });
-        }
-
-        return result;
-    }
-
-    function loadGeocodeCache() {
-        try {
-            const saved =
-                localStorage.getItem(
-                    "montevideo-camera-geocode-cache"
-                );
-
-            if (saved) {
-                state.geocodeCache =
-                    JSON.parse(saved) || {};
-            }
-        } catch {
-            state.geocodeCache = {};
-        }
-    }
-
-    function saveGeocodeCache() {
-        try {
-            localStorage.setItem(
-                "montevideo-camera-geocode-cache",
-                JSON.stringify(
-                    state.geocodeCache
-                )
-            );
-        } catch {}
-    }
-
-    async function geocodeCamera(camera) {
-        const key =
-            camera.name
-                .toLowerCase()
-                .trim();
-
-        const cached =
-            state.geocodeCache[key];
-
-        if (
-            cached &&
-            Number.isFinite(
-                Number(cached.latitude)
-            ) &&
-            Number.isFinite(
-                Number(cached.longitude)
-            )
-        ) {
-            return {
-                ...camera,
-                latitude:
-                    Number(cached.latitude),
-                longitude:
-                    Number(cached.longitude)
-            };
-        }
-
-        const url =
-            CONFIG.services.arcgisGeocoder +
-            "?f=json" +
-            "&maxLocations=1" +
-            "&outFields=*" +
-            "&forStorage=false" +
-            "&singleLine=" +
-            encodeURIComponent(
-                camera.query
-            );
-
-        try {
-            const response =
-                await fetch(
-                    url,
+        for (const radar of state.radars) {
+            const marker =
+                L.marker(
+                    [
+                        radar.latitude,
+                        radar.longitude
+                    ],
                     {
-                        cache: "no-store"
+                        icon:
+                            createRadarIcon(
+                                radar.limit
+                            )
                     }
                 );
 
-            if (!response.ok) {
-                throw new Error(
-                    "GEOCODER HTTP " +
-                    response.status
-                );
-            }
+            const limitText =
+                radar.limit
+                    ? `${radar.limit} KM/H`
+                    : "LÍMITE NO DISPONIBLE";
 
-            const data =
-                await response.json();
+            marker.bindPopup(`
+                <div style="
+                    font-family:monospace;
+                    color:#111;
+                    min-width:190px;
+                ">
+                    <strong>RADAR DE VELOCIDAD</strong>
+                    <br>
+                    LÍMITE: ${limitText}
+                    <br>
+                    FUENTE: OPENSTREETMAP
+                </div>
+            `);
 
-            const candidate =
-                data?.candidates?.[0];
-
-            if (
-                !candidate?.location
-            ) {
-                return null;
-            }
-
-            const latitude =
-                Number(
-                    candidate.location.y
-                );
-
-            const longitude =
-                Number(
-                    candidate.location.x
-                );
-
-            if (
-                !Number.isFinite(latitude) ||
-                !Number.isFinite(longitude)
-            ) {
-                return null;
-            }
-
-            state.geocodeCache[key] = {
-                latitude,
-                longitude
-            };
-
-            saveGeocodeCache();
-
-            return {
-                ...camera,
-                latitude,
-                longitude
-            };
-        } catch {
-            return null;
-        }
-    }
-
-    async function geocodeCameras(cameras) {
-        const result = [];
-
-        for (
-            let index = 0;
-            index < cameras.length;
-            index++
-        ) {
-            const camera =
-                cameras[index];
-
-            showStatus(
-                `UBICANDO CÁMARAS ${index + 1}/${cameras.length}`
-            );
-
-            const located =
-                await geocodeCamera(
-                    camera
-                );
-
-            if (located) {
-                result.push(
-                    located
-                );
-            }
-
-            await new Promise(
-                resolve =>
-                    setTimeout(
-                        resolve,
-                        CONFIG.cameras.geocodeDelay
-                    )
-            );
-        }
-
-        return result;
-    }
-
-    async function loadCameras() {
-        const now = Date.now();
-
-        if (
-            state.lastCameraQuery &&
-            now - state.lastCameraQuery <
-            30000
-        ) {
-            return;
-        }
-
-        state.lastCameraQuery = now;
-
-        showStatus(
-            "CARGANDO CÁMARAS OFICIALES..."
-        );
-
-        try {
-            const response =
-                await fetch(
-                    CONFIG.services.pageProxy +
-                    "?t=" +
-                    Date.now(),
-                    {
-                        cache: "no-store"
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `CAMERAS HTTP ${response.status}`
-                );
-            }
-
-            const text =
-                await response.text();
-
-            const locations =
-                extractCameraLocations(
-                    text
-                );
-
-            if (!locations.length) {
-                throw new Error(
-                    "NO SE ENCONTRARON UBICACIONES"
-                );
-            }
-
-            const cameras =
-                await geocodeCameras(
-                    locations
-                );
-
-            if (!cameras.length) {
-                throw new Error(
-                    "NO SE PUDIERON GEOCODIFICAR LAS CÁMARAS"
-                );
-            }
-
-            state.cameras =
-                cameras;
-
-            state.cameraCount =
-                cameras.length;
-
-            renderCameras();
-
-            showStatus(
-                `CÁMARAS OFICIALES · ${state.cameraCount}`
-            );
-        } catch (error) {
-            console.error(
-                "CAMARAS:",
-                error
-            );
-
-            showStatus(
-                "ERROR CARGANDO CÁMARAS OFICIALES"
+            marker.addTo(
+                state.radarLayer
             );
         }
     }
 
-    function renderCameras() {
-        if (!state.cameraLayer) {
-            return;
-        }
-
-        state.cameraLayer.clearLayers();
-
-        state.cameras.forEach(
-            camera => {
-                const marker =
-                    L.marker(
-                        [
-                            camera.latitude,
-                            camera.longitude
-                        ],
-                        {
-                            icon:
-                                createCameraIcon()
-                        }
-                    );
-
-                marker.bindPopup(`
-                    <div style="
-                        font-family:monospace;
-                        color:#111;
-                        min-width:220px;
-                    ">
-                        <strong style="color:#e67e00">
-                            CÁMARA DE MONITOREO
-                        </strong>
-                        <br>
-                        ${escapeHTML(camera.name)}
-                        <br>
-                        <br>
-                        FUENTE: INTENDENCIA DE MONTEVIDEO
-                    </div>
-                `);
-
-                marker.addTo(
-                    state.cameraLayer
-                );
-            }
-        );
-    }
-
-    function escapeHTML(value) {
-        return String(value)
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
-
-    function findClosestRadar(
-        latitude,
-        longitude
-    ) {
+    function findClosestRadar(latitude, longitude) {
         let closest = null;
 
         for (const radar of state.radars) {
@@ -1472,10 +771,7 @@
         return closest;
     }
 
-    function checkRadars(
-        latitude,
-        longitude
-    ) {
+    function checkRadars(latitude, longitude) {
         const closest =
             findClosestRadar(
                 latitude,
@@ -1487,7 +783,10 @@
             closest.distance >
             CONFIG.radar.warningDistance
         ) {
-            hideRadarWarning();
+            if (!state.warningRadar) {
+                hideRadarWarning();
+            }
+
             return null;
         }
 
@@ -1502,10 +801,61 @@
         return closest;
     }
 
-    function showRadarWarning(
-        radar,
-        distance
-    ) {
+    function findClosestCamera(latitude, longitude) {
+        let closest = null;
+
+        for (const camera of state.cameras) {
+            if (
+                !Number.isFinite(camera.latitude) ||
+                !Number.isFinite(camera.longitude)
+            ) {
+                continue;
+            }
+
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    camera.latitude,
+                    camera.longitude
+                );
+
+            if (
+                !closest ||
+                distance < closest.distance
+            ) {
+                closest = {
+                    camera,
+                    distance
+                };
+            }
+        }
+
+        return closest;
+    }
+
+    function checkCameras(latitude, longitude) {
+        const closest =
+            findClosestCamera(
+                latitude,
+                longitude
+            );
+
+        if (
+            !closest ||
+            closest.distance >
+            CONFIG.radar.warningDistance
+        ) {
+            return null;
+        }
+
+        state.warningCamera =
+            closest.camera;
+
+        return closest;
+    }
+
+    function showRadarWarning(radar, distance) {
         const warning =
             byId("radarWarning");
 
@@ -1534,59 +884,15 @@
             limitElement.textContent =
                 radar.limit
                     ? `LÍMITE ${radar.limit} KM/H`
-                    : "RADAR";
+                    : "LÍMITE NO DISPONIBLE";
         }
 
         warning.classList.add("active");
 
-        speakRadarWarning(
+        alertRadar(
             radar,
             rounded
         );
-    }
-
-    function speakRadarWarning(
-        radar,
-        distance
-    ) {
-        if (
-            !("speechSynthesis" in window)
-        ) {
-            return;
-        }
-
-        const now = Date.now();
-
-        if (
-            now - state.lastSpeech <
-            10000
-        ) {
-            return;
-        }
-
-        state.lastSpeech = now;
-
-        const text =
-            radar.limit
-                ? `Radar a ${distance} metros. Límite ${radar.limit} kilómetros por hora.`
-                : `Radar a ${distance} metros.`;
-
-        try {
-            window.speechSynthesis.cancel();
-
-            const utterance =
-                new SpeechSynthesisUtterance(
-                    text
-                );
-
-            utterance.lang = "es-ES";
-            utterance.rate = 1;
-            utterance.pitch = 1;
-
-            window.speechSynthesis.speak(
-                utterance
-            );
-        } catch {}
     }
 
     function hideRadarWarning() {
@@ -1600,6 +906,614 @@
         }
 
         state.warningRadar = null;
+    }
+
+    function loadVoices() {
+        if (!("speechSynthesis" in window)) {
+            return;
+        }
+
+        state.voices =
+            window.speechSynthesis.getVoices();
+
+        const argentinian =
+            state.voices.find(
+                voice =>
+                    String(voice.lang).toLowerCase() ===
+                    "es-ar"
+            );
+
+        const spanishLatin =
+            state.voices.find(
+                voice =>
+                    /^es-(mx|ar|us|419)$/i.test(
+                        String(voice.lang)
+                    )
+            );
+
+        const spanish =
+            state.voices.find(
+                voice =>
+                    /^es/i.test(
+                        String(voice.lang)
+                    )
+            );
+
+        state.preferredVoice =
+            argentinian ||
+            spanishLatin ||
+            spanish ||
+            null;
+    }
+
+    function speak(text) {
+        if (
+            !CONFIG.alerts.voice ||
+            !("speechSynthesis" in window)
+        ) {
+            return;
+        }
+
+        const now = Date.now();
+
+        if (
+            now - state.lastSpeech <
+            CONFIG.alerts.cooldown
+        ) {
+            return;
+        }
+
+        state.lastSpeech = now;
+
+        loadVoices();
+
+        try {
+            window.speechSynthesis.cancel();
+
+            const utterance =
+                new SpeechSynthesisUtterance(
+                    text
+                );
+
+            utterance.lang =
+                state.preferredVoice?.lang ||
+                "es-AR";
+
+            if (state.preferredVoice) {
+                utterance.voice =
+                    state.preferredVoice;
+            }
+
+            utterance.rate = .96;
+            utterance.pitch = .98;
+            utterance.volume = 1;
+
+            window.speechSynthesis.speak(
+                utterance
+            );
+        } catch (error) {
+            console.warn(
+                "[Voice]",
+                error
+            );
+        }
+    }
+
+    function vibrate(pattern = [180, 80, 180]) {
+        if (
+            !CONFIG.alerts.vibration ||
+            !("vibrate" in navigator)
+        ) {
+            return false;
+        }
+
+        const now = Date.now();
+
+        if (
+            now - state.lastVibration <
+            CONFIG.alerts.cooldown
+        ) {
+            return false;
+        }
+
+        state.lastVibration = now;
+
+        try {
+            return navigator.vibrate(pattern);
+        } catch (error) {
+            console.warn(
+                "[Vibration]",
+                error
+            );
+
+            return false;
+        }
+    }
+
+    function alertRadar(radar, distance) {
+        const limitText =
+            radar.limit
+                ? `Límite ${radar.limit} kilómetros por hora.`
+                : "";
+
+        speak(
+            `Atención. Radar a ${distance} metros. ${limitText}`
+        );
+
+        vibrate();
+    }
+
+    function setVoiceEnabled(enabled) {
+        CONFIG.alerts.voice =
+            Boolean(enabled);
+
+        if (!CONFIG.alerts.voice) {
+            if ("speechSynthesis" in window) {
+                window.speechSynthesis.cancel();
+            }
+        }
+
+        updateSettingsUI();
+    }
+
+    function setVibrationEnabled(enabled) {
+        CONFIG.alerts.vibration =
+            Boolean(enabled);
+
+        if (!CONFIG.alerts.vibration) {
+            try {
+                navigator.vibrate?.(0);
+            } catch (_) {}
+        }
+
+        updateSettingsUI();
+    }
+
+    function updateSettingsUI() {
+        const voiceButton =
+            byId("voiceButton");
+
+        const vibrationButton =
+            byId("vibrationButton");
+
+        if (voiceButton) {
+            voiceButton.classList.toggle(
+                "active",
+                CONFIG.alerts.voice
+            );
+
+            voiceButton.textContent =
+                CONFIG.alerts.voice
+                    ? "VOZ ON"
+                    : "VOZ OFF";
+        }
+
+        if (vibrationButton) {
+            vibrationButton.classList.toggle(
+                "active",
+                CONFIG.alerts.vibration
+            );
+
+            vibrationButton.textContent =
+                CONFIG.alerts.vibration
+                    ? "VIB ON"
+                    : "VIB OFF";
+        }
+    }
+
+    function normalizeCameraText(value) {
+        return String(value || "")
+            .replace(/\u00a0/g, " ")
+            .replace(/\s+/g, " ")
+            .replace(
+                /^[-–—•·*]\s*/,
+                ""
+            )
+            .trim();
+    }
+
+    function extractCameraLocations(html) {
+        const parser =
+            new DOMParser();
+
+        const document =
+            parser.parseFromString(
+                html,
+                "text/html"
+            );
+
+        const heading =
+            Array.from(
+                document.querySelectorAll(
+                    "h1"
+                )
+            ).find(
+                element =>
+                    /cámaras de monitoreo/i.test(
+                        element.textContent
+                    )
+            );
+
+        if (!heading) {
+            return [];
+        }
+
+        const locations = [];
+
+        let current =
+            heading.nextElementSibling;
+
+        while (current) {
+            if (
+                current.matches &&
+                current.matches("h2")
+            ) {
+                break;
+            }
+
+            if (
+                current.matches &&
+                current.matches("ul, ol")
+            ) {
+                const items =
+                    Array.from(
+                        current.querySelectorAll(
+                            ":scope > li"
+                        )
+                    );
+
+                for (const item of items) {
+                    const text =
+                        normalizeCameraText(
+                            item.textContent
+                        );
+
+                    if (
+                        text &&
+                        /[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(
+                            text
+                        )
+                    ) {
+                        locations.push(text);
+                    }
+                }
+            }
+
+            if (
+                current.matches &&
+                current.matches("p")
+            ) {
+                const text =
+                    normalizeCameraText(
+                        current.textContent
+                    );
+
+                if (
+                    / y /.test(text) &&
+                    !/Se trata de/.test(text)
+                ) {
+                    locations.push(text);
+                }
+            }
+
+            current =
+                current.nextElementSibling;
+        }
+
+        return Array.from(
+            new Set(locations)
+        );
+    }
+
+    async function geocodeCamera(location) {
+        if (
+            state.geocodeCache.has(location)
+        ) {
+            return state.geocodeCache.get(
+                location
+            );
+        }
+
+        const query =
+            `${location}, Montevideo, Uruguay`;
+
+        try {
+            const url =
+                new URL(
+                    CONFIG.services.nominatim
+                );
+
+            url.searchParams.set(
+                "format",
+                "jsonv2"
+            );
+
+            url.searchParams.set(
+                "q",
+                query
+            );
+
+            url.searchParams.set(
+                "limit",
+                "1"
+            );
+
+            url.searchParams.set(
+                "countrycodes",
+                "uy"
+            );
+
+            const response =
+                await fetch(
+                    url.toString(),
+                    {
+                        headers: {
+                            "Accept":
+                                "application/json"
+                        }
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Nominatim HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            const item =
+                Array.isArray(data)
+                    ? data[0]
+                    : null;
+
+            if (!item) {
+                state.geocodeCache.set(
+                    location,
+                    null
+                );
+
+                return null;
+            }
+
+            const result = {
+                latitude:
+                    Number(item.lat),
+
+                longitude:
+                    Number(item.lon),
+
+                location
+            };
+
+            state.geocodeCache.set(
+                location,
+                result
+            );
+
+            return result;
+        } catch (error) {
+            console.warn(
+                "[Camera geocode]",
+                location,
+                error
+            );
+
+            return null;
+        }
+    }
+
+    async function loadOfficialCameras() {
+        if (state.cameraLoading) {
+            return;
+        }
+
+        state.cameraLoading = true;
+
+        try {
+            showStatus(
+                `ACTUALIZANDO CÁMARAS · ${state.cameraCount} CARGADAS`
+            );
+
+            const cacheBust =
+                `?_=${Date.now()}`;
+
+            const response =
+                await fetch(
+                    CONFIG.cameras.sourceUrl +
+                    cacheBust,
+                    {
+                        method: "GET",
+                        cache: "no-store"
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Montevideo HTTP ${response.status}`
+                );
+            }
+
+            const html =
+                await response.text();
+
+            const locations =
+                extractCameraLocations(
+                    html
+                );
+
+            if (!locations.length) {
+                throw new Error(
+                    "NO SE ENCONTRARON LOCACIONES"
+                );
+            }
+
+            const oldCameras =
+                new Map(
+                    state.cameras.map(
+                        camera => [
+                            camera.location,
+                            camera
+                        ]
+                    )
+                );
+
+            const cameras = [];
+
+            for (
+                let index = 0;
+                index < locations.length;
+                index++
+            ) {
+                const location =
+                    locations[index];
+
+                const cached =
+                    oldCameras.get(
+                        location
+                    );
+
+                if (cached) {
+                    cameras.push(cached);
+                    continue;
+                }
+
+                const geocoded =
+                    await geocodeCamera(
+                        location
+                    );
+
+                if (geocoded) {
+                    cameras.push({
+                        id:
+                            `official-${index}-${location}`,
+                        latitude:
+                            geocoded.latitude,
+                        longitude:
+                            geocoded.longitude,
+                        location,
+                        source:
+                            "Intendencia de Montevideo"
+                    });
+                }
+
+                await sleep(
+                    CONFIG.cameras.geocodeDelay
+                );
+            }
+
+            state.cameras =
+                deduplicateCameras(
+                    cameras
+                );
+
+            state.cameraCount =
+                state.cameras.length;
+
+            renderOfficialCameras();
+
+            showStatus(
+                `GPS ${state.locationActive ? "ACTIVO" : "OFF"} · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`
+            );
+        } catch (error) {
+            console.error(
+                "[Official cameras]",
+                error
+            );
+
+            showStatus(
+                `RADARES ${state.radarCount} · CÁMARAS ${state.cameraCount}`
+            );
+        } finally {
+            state.cameraLoading = false;
+        }
+    }
+
+    function sleep(milliseconds) {
+        return new Promise(
+            resolve =>
+                setTimeout(
+                    resolve,
+                    milliseconds
+                )
+        );
+    }
+
+    function deduplicateCameras(cameras) {
+        const unique = [];
+
+        for (const camera of cameras) {
+            const exists =
+                unique.some(
+                    item =>
+                        distanceMeters(
+                            item.latitude,
+                            item.longitude,
+                            camera.latitude,
+                            camera.longitude
+                        ) < 35
+                );
+
+            if (!exists) {
+                unique.push(camera);
+            }
+        }
+
+        return unique;
+    }
+
+    function renderOfficialCameras() {
+        if (!state.cameraLayer) {
+            return;
+        }
+
+        state.cameraLayer.clearLayers();
+
+        for (const camera of state.cameras) {
+            const marker =
+                L.marker(
+                    [
+                        camera.latitude,
+                        camera.longitude
+                    ],
+                    {
+                        icon:
+                            createCameraIcon()
+                    }
+                );
+
+            marker.bindPopup(`
+                <div style="
+                    font-family:Arial,sans-serif;
+                    color:#111;
+                    min-width:210px;
+                ">
+                    <strong style="color:#d97900">
+                        CÁMARA DE MONITOREO
+                    </strong>
+                    <br><br>
+                    ${escapeHtml(camera.location)}
+                    <br><br>
+                    <small>
+                        FUENTE: INTENDENCIA DE MONTEVIDEO
+                    </small>
+                </div>
+            `);
+
+            marker.addTo(
+                state.cameraLayer
+            );
+        }
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;")
+            .replace(/'/g, "&#039;");
     }
 
     function startSimulation() {
@@ -1651,16 +1565,18 @@
             longitude
         );
 
-        state.map?.setView(
-            [
-                latitude,
-                longitude
-            ],
-            CONFIG.map.userZoom,
-            {
-                animate: true
-            }
-        );
+        if (state.map) {
+            state.map.setView(
+                [
+                    latitude,
+                    longitude
+                ],
+                CONFIG.map.userZoom,
+                {
+                    animate: true
+                }
+            );
+        }
 
         showStatus(
             "MODO PRUEBA ACTIVO"
@@ -1730,18 +1646,25 @@
             simulation.longitude
         );
 
+        checkCameras(
+            simulation.latitude,
+            simulation.longitude
+        );
+
         updateSimulationUI();
 
-        state.map?.panTo(
-            [
-                simulation.latitude,
-                simulation.longitude
-            ],
-            {
-                animate: true,
-                duration: .25
-            }
-        );
+        if (state.map) {
+            state.map.panTo(
+                [
+                    simulation.latitude,
+                    simulation.longitude
+                ],
+                {
+                    animate: true,
+                    duration: .25
+                }
+            );
+        }
     }
 
     function updateSimulationUI() {
@@ -1832,37 +1755,56 @@
         );
     }
 
-    function startRefreshTimers() {
+    function startRadarRefresh() {
         if (state.radarRefreshTimer) {
             clearInterval(
                 state.radarRefreshTimer
             );
         }
 
+        state.radarRefreshTimer =
+            setInterval(
+                () => {
+                    const position =
+                        state.simulation.active
+                            ? {
+                                latitude:
+                                    state.simulation.latitude,
+                                longitude:
+                                    state.simulation.longitude
+                            }
+                            : state.lastPosition;
+
+                    if (!position) {
+                        return;
+                    }
+
+                    loadRadars(
+                        position.latitude,
+                        position.longitude
+                    );
+                },
+                CONFIG.radar.refreshInterval
+            );
+    }
+
+    function startCameraRefresh() {
         if (state.cameraRefreshTimer) {
             clearInterval(
                 state.cameraRefreshTimer
             );
         }
 
-        state.radarRefreshTimer =
-            setInterval(
-                () => {
-                    loadRadars();
-                },
-                CONFIG.radar.refreshInterval
-            );
-
         state.cameraRefreshTimer =
             setInterval(
                 () => {
-                    loadCameras();
+                    loadOfficialCameras();
                 },
                 CONFIG.cameras.refreshInterval
             );
     }
 
-    async function initialize() {
+    function initialize() {
         if (state.initialized) {
             return;
         }
@@ -1873,20 +1815,31 @@
             return;
         }
 
-        loadGeocodeCache();
+        loadVoices();
+
+        if ("speechSynthesis" in window) {
+            window.speechSynthesis.onvoiceschanged =
+                loadVoices;
+        }
+
+        updateSettingsUI();
 
         showStatus(
-            "CARGANDO FUENTES OFICIALES..."
+            "RADAR ONLINE · CARGANDO DATOS"
         );
 
         requestLocation();
 
-        await Promise.allSettled([
-            loadRadars(),
-            loadCameras()
-        ]);
+        loadRadars(
+            CONFIG.map.defaultCenter[0],
+            CONFIG.map.defaultCenter[1]
+        );
 
-        startRefreshTimers();
+        loadOfficialCameras();
+
+        startRadarRefresh();
+
+        startCameraRefresh();
 
         setTimeout(
             () => {
@@ -1900,20 +1853,6 @@
                 state.map?.invalidateSize();
             },
             1000
-        );
-
-        setTimeout(
-            () => {
-                if (
-                    state.radarCount ||
-                    state.cameraCount
-                ) {
-                    showStatus(
-                        `ONLINE · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`
-                    );
-                }
-            },
-            1500
         );
     }
 
@@ -1942,19 +1881,46 @@
             return state.simulation;
         },
 
+        get alerts() {
+            return {
+                voice:
+                    CONFIG.alerts.voice,
+                vibration:
+                    CONFIG.alerts.vibration
+            };
+        },
+
         requestLocation,
+
         startSimulation,
+
         stopSimulation,
+
         simulationStep,
+
         resetSimulation,
+
         updateUserMarker,
+
         distanceMeters,
+
         destinationPoint,
+
         checkRadars,
+
+        checkCameras,
+
         updateSimulationUI,
-        loadRadars,
-        loadCameras,
+
         showStatus,
+
+        setVoiceEnabled,
+
+        setVibrationEnabled,
+
+        loadRadars,
+
+        loadOfficialCameras,
 
         invalidateSize() {
             state.map?.invalidateSize();
