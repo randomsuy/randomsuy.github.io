@@ -1,19 +1,14 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="description" content="Keolel Radar">
     <meta name="theme-color" content="#07080b">
     <title>Keolel Radar</title>
 
     <link rel="stylesheet" href="/assets/css/style.css">
-    <link
-            rel="stylesheet"
-            href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-            integrity="sha256-p4NxAoJBhIINfQ3j7w8pQW1yV8q2Q9r5h1V3x8r7W0="
-            crossorigin=""
-    >
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 
     <style>
         .radar-page {
@@ -51,6 +46,7 @@
         .radar-status-dot {
             width: 7px;
             height: 7px;
+            flex: 0 0 7px;
             border-radius: 50%;
             background: #36c8d8;
             box-shadow: 0 0 12px #36c8d8;
@@ -65,19 +61,13 @@
 
         .radar-map-panel {
             position: relative;
-            min-height: 680px;
+            width: 100%;
+            height: 680px;
+            min-width: 0;
             border: 1px solid rgba(54, 200, 216, .25);
             background: #090b0f;
             overflow: hidden;
-        }
-
-        .radar-map-panel::before {
-            content: "";
-            position: absolute;
-            inset: 0;
-            z-index: 5;
-            pointer-events: none;
-            border: 1px solid rgba(255,255,255,.04);
+            isolation: isolate;
         }
 
         #map {
@@ -85,23 +75,32 @@
             inset: 0;
             width: 100%;
             height: 100%;
-            min-height: 680px;
+            min-height: 0;
             background: #0b0d11;
         }
 
         .leaflet-container {
+            width: 100%;
+            height: 100%;
             font-family: monospace;
             background: #0b0d11;
         }
 
+        .leaflet-control-zoom {
+            margin: 18px !important;
+        }
+
         .leaflet-control-zoom a {
+            width: 38px !important;
+            height: 38px !important;
+            line-height: 36px !important;
             background: #080a0e !important;
             color: #36c8d8 !important;
             border-color: rgba(54,200,216,.3) !important;
         }
 
         .leaflet-control-attribution {
-            background: rgba(7,8,11,.8) !important;
+            background: rgba(7,8,11,.85) !important;
             color: #77818e !important;
         }
 
@@ -109,63 +108,35 @@
             color: #36c8d8 !important;
         }
 
-        .map-overlay {
+        .map-ui {
             position: absolute;
             z-index: 1000;
             pointer-events: none;
-        }
-
-        .map-top-left {
-            top: 18px;
-            left: 18px;
-        }
-
-        .map-top-right {
-            top: 18px;
-            right: 18px;
-        }
-
-        .map-bottom-left {
-            bottom: 18px;
-            left: 18px;
-        }
-
-        .map-bottom-right {
-            bottom: 18px;
-            right: 18px;
-        }
-
-        .map-label {
-            padding: 8px 12px;
-            border: 1px solid rgba(54,200,216,.3);
-            background: rgba(7,8,11,.9);
-            color: #36c8d8;
-            font-family: monospace;
-            font-size: 10px;
-            letter-spacing: 2px;
-            backdrop-filter: blur(8px);
         }
 
         .map-search {
             position: absolute;
             top: 18px;
             left: 50%;
+            z-index: 1002;
             transform: translateX(-50%);
-            z-index: 1001;
-            width: min(520px, calc(100% - 180px));
+            width: min(520px, calc(100% - 150px));
             display: flex;
             gap: 6px;
+            pointer-events: auto;
         }
 
         #destinationSearch {
             width: 100%;
+            min-width: 0;
             height: 44px;
             padding: 0 15px;
             border: 1px solid rgba(54,200,216,.4);
             outline: none;
-            background: rgba(7,8,11,.94);
+            background: rgba(7,8,11,.96);
             color: #e8faff;
             font-family: monospace;
+            font-size: 12px;
             letter-spacing: 1px;
             box-shadow: 0 0 20px rgba(0,0,0,.3);
         }
@@ -182,18 +153,26 @@
         #destinationSearchButton,
         #fullscreenButton,
         #locateButton {
-            border: 1px solid rgba(54,200,216,.4);
-            background: rgba(7,8,11,.95);
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgba(54,200,216,.45);
+            background: rgba(7,8,11,.96);
             color: #36c8d8;
             font-family: monospace;
-            font-size: 11px;
+            font-size: 12px;
+            font-weight: 700;
             letter-spacing: 1px;
             cursor: pointer;
-            transition: .2s ease;
+            transition: background .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease;
+            touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         #destinationSearchButton {
+            width: 48px;
             min-width: 48px;
+            height: 44px;
         }
 
         #destinationSearchButton:hover,
@@ -201,81 +180,52 @@
         #locateButton:hover {
             background: #36c8d8;
             color: #07080b;
+            border-color: #36c8d8;
             box-shadow: 0 0 18px rgba(54,200,216,.35);
+        }
+
+        #destinationSearchButton:disabled {
+            opacity: .55;
+            cursor: wait;
         }
 
         #fullscreenButton {
             position: absolute;
             top: 18px;
             right: 18px;
-            z-index: 1002;
+            z-index: 1003;
             width: 44px;
             height: 44px;
+            padding: 0;
+            pointer-events: auto;
         }
 
         #locateButton {
             position: absolute;
-            bottom: 18px;
             right: 18px;
-            z-index: 1001;
-            min-height: 42px;
+            bottom: 18px;
+            z-index: 1002;
+            min-width: 150px;
+            min-height: 44px;
             padding: 0 15px;
+            pointer-events: auto;
         }
 
-        .radar-sidebar {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .radar-panel {
-            position: relative;
-            border: 1px solid rgba(54,200,216,.2);
-            background: rgba(10,12,16,.94);
-            padding: 18px;
-        }
-
-        .radar-panel-title {
-            display: flex;
-            align-items: center;
-            gap: 9px;
-            margin-bottom: 16px;
-            color: #36c8d8;
+        #mapStatus {
+            position: absolute;
+            left: 18px;
+            top: 76px;
+            z-index: 1001;
+            max-width: 280px;
+            padding: 8px 12px;
+            border-left: 2px solid #36c8d8;
+            background: rgba(7,8,11,.92);
+            color: #aeb8c2;
             font-family: monospace;
-            font-size: 11px;
-            letter-spacing: 2px;
-        }
-
-        .radar-panel-title span {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            background: #36c8d8;
-            box-shadow: 0 0 9px #36c8d8;
-        }
-
-        .radar-metric {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 11px 0;
-            border-bottom: 1px solid rgba(255,255,255,.05);
-            font-family: monospace;
-        }
-
-        .radar-metric:last-child {
-            border-bottom: 0;
-        }
-
-        .radar-metric span {
-            color: #687381;
-            font-size: 10px;
+            font-size: 9px;
+            line-height: 1.4;
             letter-spacing: 1px;
-        }
-
-        .radar-metric strong {
-            color: #dce7ed;
-            font-size: 13px;
+            pointer-events: none;
         }
 
         #mapSpeed {
@@ -286,7 +236,7 @@
             min-width: 90px;
             padding: 12px 16px;
             border: 1px solid rgba(54,200,216,.35);
-            background: rgba(7,8,11,.92);
+            background: rgba(7,8,11,.94);
             color: #36c8d8;
             font-family: monospace;
             font-size: 16px;
@@ -295,29 +245,34 @@
             pointer-events: none;
         }
 
-        #mapStatus {
-            position: absolute;
-            left: 18px;
-            top: 18px;
-            z-index: 1001;
-            max-width: 280px;
+        .map-label {
             padding: 8px 12px;
-            border-left: 2px solid #36c8d8;
+            border: 1px solid rgba(54,200,216,.3);
             background: rgba(7,8,11,.9);
-            color: #aeb8c2;
+            color: #36c8d8;
             font-family: monospace;
-            font-size: 9px;
-            letter-spacing: 1px;
-            pointer-events: none;
+            font-size: 10px;
+            letter-spacing: 2px;
+            backdrop-filter: blur(8px);
+        }
+
+        .map-top-right {
+            top: 76px;
+            right: 18px;
+        }
+
+        .map-bottom-right {
+            bottom: 76px;
+            right: 18px;
         }
 
         #radarWarning {
             position: absolute;
             left: 50%;
             bottom: 28px;
-            transform: translateX(-50%) translateY(20px);
             z-index: 1100;
             min-width: 280px;
+            max-width: calc(100% - 36px);
             padding: 18px 24px;
             border: 1px solid #ff3131;
             background: rgba(45,0,0,.95);
@@ -325,6 +280,7 @@
             text-align: center;
             opacity: 0;
             pointer-events: none;
+            transform: translateX(-50%) translateY(20px);
             transition: .25s ease;
             box-shadow: 0 0 35px rgba(255,0,0,.25);
         }
@@ -352,6 +308,67 @@
             letter-spacing: 2px;
         }
 
+        .radar-sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            min-width: 0;
+        }
+
+        .radar-panel {
+            position: relative;
+            min-width: 0;
+            border: 1px solid rgba(54,200,216,.2);
+            background: rgba(10,12,16,.94);
+            padding: 18px;
+        }
+
+        .radar-panel-title {
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            margin-bottom: 16px;
+            color: #36c8d8;
+            font-family: monospace;
+            font-size: 11px;
+            letter-spacing: 2px;
+        }
+
+        .radar-panel-title span {
+            width: 6px;
+            height: 6px;
+            flex: 0 0 6px;
+            border-radius: 50%;
+            background: #36c8d8;
+            box-shadow: 0 0 9px #36c8d8;
+        }
+
+        .radar-metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            padding: 11px 0;
+            border-bottom: 1px solid rgba(255,255,255,.05);
+            font-family: monospace;
+        }
+
+        .radar-metric:last-child {
+            border-bottom: 0;
+        }
+
+        .radar-metric span {
+            color: #687381;
+            font-size: 10px;
+            letter-spacing: 1px;
+        }
+
+        .radar-metric strong {
+            color: #dce7ed;
+            font-size: 13px;
+            text-align: right;
+        }
+
         .radar-toggle-row {
             display: flex;
             align-items: center;
@@ -363,6 +380,7 @@
             display: flex;
             flex-direction: column;
             gap: 5px;
+            min-width: 0;
         }
 
         .radar-toggle-text strong {
@@ -383,14 +401,13 @@
             position: relative;
             width: 54px;
             height: 28px;
-            flex: 0 0 auto;
+            flex: 0 0 54px;
         }
 
         .radar-toggle input {
             position: absolute;
             opacity: 0;
-            width: 0;
-            height: 0;
+            pointer-events: none;
         }
 
         .radar-toggle-slider {
@@ -427,11 +444,11 @@
 
         .test-controller {
             display: none;
-            grid-template-columns: repeat(3, 48px);
-            grid-template-rows: repeat(3, 48px);
-            gap: 5px;
+            grid-template-columns: repeat(3, 52px);
+            grid-template-rows: repeat(3, 52px);
+            gap: 6px;
             justify-content: center;
-            margin-top: 16px;
+            margin-top: 18px;
         }
 
         .test-controller.active {
@@ -439,12 +456,19 @@
         }
 
         .test-controller button {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 52px;
+            height: 52px;
+            padding: 0;
             border: 1px solid rgba(54,200,216,.35);
             background: #0a0d11;
             color: #36c8d8;
-            font-size: 17px;
+            font-size: 18px;
             cursor: pointer;
             touch-action: manipulation;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .test-controller button:hover,
@@ -507,6 +531,7 @@
             font-family: monospace;
             font-size: 11px;
             line-height: 1.7;
+            overflow-wrap: anywhere;
         }
 
         #routeInstructions {
@@ -523,26 +548,7 @@
             font-size: 9px;
         }
 
-        .radar-page .hud-button {
-            cursor: pointer;
-        }
-
-        /*
-         * FULLSCREEN
-         *
-         * Importante:
-         * No usamos "position: fixed" para simular fullscreen.
-         * El API Fullscreen ya coloca el panel sobre toda la pantalla.
-         */
-        .radar-map-panel:fullscreen {
-            width: 100vw;
-            height: 100vh;
-            min-height: 100vh;
-            margin: 0;
-            border: 0;
-            background: #090b0f;
-        }
-
+        .radar-map-panel:fullscreen,
         .radar-map-panel:-webkit-full-screen {
             width: 100vw;
             height: 100vh;
@@ -554,7 +560,9 @@
 
         .radar-map-panel:fullscreen #map,
         .radar-map-panel:-webkit-full-screen #map {
-            min-height: 100vh;
+            width: 100%;
+            height: 100%;
+            min-height: 100%;
         }
 
         body.radar-is-fullscreen {
@@ -574,12 +582,18 @@
 
         @media (max-width: 700px) {
             .radar-hud {
-                width: calc(100% - 14px);
-                margin: 7px auto;
+                width: calc(100% - 12px);
+                margin: 6px auto;
             }
 
             .radar-layout {
                 display: block;
+                margin-top: 18px;
+            }
+
+            .radar-map-panel {
+                height: min(76vh, 620px);
+                min-height: 520px;
             }
 
             .radar-sidebar {
@@ -587,29 +601,141 @@
                 margin-top: 10px;
             }
 
-            .radar-map-panel,
-            #map {
-                min-height: 620px;
-            }
-
             .map-search {
+                top: 12px;
                 left: 12px;
                 right: 12px;
-                transform: none;
                 width: auto;
+                transform: none;
+            }
+
+            #destinationSearch,
+            #destinationSearchButton {
+                height: 46px;
             }
 
             #fullscreenButton {
                 top: 70px;
+                right: 12px;
+                width: 46px;
+                height: 46px;
             }
 
             #mapStatus {
-                top: 125px;
-                max-width: calc(100% - 36px);
+                top: 70px;
+                left: 12px;
+                right: 68px;
+                max-width: none;
+                min-height: 46px;
+                display: flex;
+                align-items: center;
+                box-sizing: border-box;
+            }
+
+            .map-top-right {
+                display: none;
+            }
+
+            .map-bottom-right {
+                right: 12px;
+                bottom: 74px;
+            }
+
+            .map-bottom-right .map-label {
+                font-size: 8px;
+                padding: 6px 8px;
             }
 
             #mapSpeed {
+                left: 12px;
+                bottom: 12px;
+                min-width: 82px;
+                padding: 10px 12px;
+                font-size: 14px;
+            }
+
+            #locateButton {
+                right: 12px;
+                bottom: 12px;
+                min-width: 0;
+                width: auto;
+                min-height: 44px;
+                padding: 0 13px;
+                font-size: 10px;
+            }
+
+            #radarWarning {
                 bottom: 70px;
+                min-width: 0;
+                width: calc(100% - 40px);
+                padding: 14px 16px;
+            }
+
+            #radarWarningDistance {
+                font-size: 25px;
+            }
+
+            .leaflet-control-zoom {
+                margin: 12px !important;
+            }
+
+            .leaflet-control-zoom a {
+                width: 40px !important;
+                height: 40px !important;
+                line-height: 38px !important;
+            }
+
+            .radar-panel {
+                padding: 15px;
+            }
+
+            .radar-system-info {
+                gap: 8px;
+                font-size: 9px;
+                letter-spacing: 1.4px;
+            }
+        }
+
+        @media (max-width: 430px) {
+            .radar-map-panel {
+                height: 560px;
+                min-height: 500px;
+            }
+
+            .radar-system-info span:nth-child(4),
+            .radar-system-info span:nth-child(5),
+            .radar-system-info span:nth-child(6),
+            .radar-system-info span:nth-child(7) {
+                display: none;
+            }
+
+            #destinationSearch {
+                font-size: 11px;
+            }
+
+            #locateButton {
+                font-size: 9px;
+                padding: 0 10px;
+            }
+
+            #mapSpeed {
+                min-width: 74px;
+                font-size: 12px;
+            }
+
+            .map-bottom-right {
+                display: none;
+            }
+
+            .test-controller {
+                grid-template-columns: repeat(3, 56px);
+                grid-template-rows: repeat(3, 56px);
+                gap: 5px;
+            }
+
+            .test-controller button {
+                width: 56px;
+                height: 56px;
             }
         }
     </style>
@@ -677,7 +803,6 @@
         <div class="hud-content">
 
             <section class="section">
-
                 <div class="section-heading">
                     <span class="section-number">01</span>
                     <h2 class="section-title">RADAR MAP</h2>
@@ -686,7 +811,6 @@
                 <div class="radar-layout">
 
                     <div class="radar-map-panel" id="radarMapPanel">
-
                         <div id="map"></div>
 
                         <div class="map-search">
@@ -697,14 +821,11 @@
                                     placeholder="BUSCAR DESTINO..."
                                     aria-label="Buscar destino"
                             >
-
                             <button
                                     id="destinationSearchButton"
                                     type="button"
                                     aria-label="Buscar destino"
-                            >
-                                →
-                            </button>
+                            >→</button>
                         </div>
 
                         <button
@@ -712,42 +833,33 @@
                                 type="button"
                                 aria-label="Pantalla completa"
                                 title="Pantalla completa"
-                        >
-                            ⛶
-                        </button>
+                        >⛶</button>
 
                         <button
                                 id="locateButton"
                                 type="button"
-                        >
-                            📍 MI UBICACIÓN
-                        </button>
+                        >📍 MI UBICACIÓN</button>
 
-                        <div id="mapStatus" class="map-overlay">
+                        <div id="mapStatus">
                             Esperando ubicación...
                         </div>
 
-                        <div id="mapSpeed" class="map-overlay">
+                        <div id="mapSpeed">
                             -- KM/H
                         </div>
 
-                        <div class="map-overlay map-top-right">
-                            <div class="map-label">
-                                LIVE TRACKING
-                            </div>
+                        <div class="map-ui map-top-right">
+                            <div class="map-label">LIVE TRACKING</div>
                         </div>
 
-                        <div class="map-overlay map-bottom-right">
-                            <div class="map-label">
-                                OSM DATA
-                            </div>
+                        <div class="map-ui map-bottom-right">
+                            <div class="map-label">OSM DATA</div>
                         </div>
 
                         <div id="radarWarning">
                             <span id="radarWarningDistance">300 M</span>
                             <span id="radarWarningLimit">LÍMITE -- KM/H</span>
                         </div>
-
                     </div>
 
                     <aside class="radar-sidebar">
@@ -758,7 +870,6 @@
                                 NAVIGATION
                             </div>
 
-                            <!-- IDs únicos: ya no existe un segundo #gpsState -->
                             <div class="radar-metric">
                                 <span>GPS</span>
                                 <strong id="gpsStateSidebar">OFF</strong>
@@ -794,86 +905,35 @@
                             <div class="radar-toggle-row">
                                 <div class="radar-toggle-text">
                                     <strong>SIMULATION</strong>
-                                    <span>
-                                        Mueve la posición manualmente para probar distancias.
-                                    </span>
+                                    <span>Mueve la posición manualmente para probar distancias.</span>
                                 </div>
 
                                 <label class="radar-toggle">
-                                    <input
-                                            id="simulationToggle"
-                                            type="checkbox"
-                                    >
+                                    <input id="simulationToggle" type="checkbox">
                                     <span class="radar-toggle-slider"></span>
                                 </label>
                             </div>
 
-                            <div
-                                    id="testController"
-                                    class="test-controller"
-                            >
-                                <button
-                                        class="up"
-                                        type="button"
-                                        data-direction="up"
-                                >
-                                    ▲
-                                </button>
-
-                                <button
-                                        class="left"
-                                        type="button"
-                                        data-direction="left"
-                                >
-                                    ◀
-                                </button>
-
-                                <button
-                                        class="center"
-                                        type="button"
-                                        disabled
-                                >
-                                    ◆
-                                </button>
-
-                                <button
-                                        class="right"
-                                        type="button"
-                                        data-direction="right"
-                                >
-                                    ▶
-                                </button>
-
-                                <button
-                                        class="down"
-                                        type="button"
-                                        data-direction="down"
-                                >
-                                    ▼
-                                </button>
+                            <div id="testController" class="test-controller">
+                                <button class="up" type="button" data-direction="up">▲</button>
+                                <button class="left" type="button" data-direction="left">◀</button>
+                                <button class="center" type="button" disabled>◆</button>
+                                <button class="right" type="button" data-direction="right">▶</button>
+                                <button class="down" type="button" data-direction="down">▼</button>
                             </div>
 
-                            <div
-                                    id="testControllerInfo"
-                                    class="test-controller-info"
-                            >
+                            <div id="testControllerInfo" class="test-controller-info">
                                 MODO PRUEBA ACTIVO · USA EL MANDO PARA MOVER LA POSICIÓN
                             </div>
                         </div>
 
-                        <div
-                                class="radar-panel route-panel"
-                                id="routePanel"
-                        >
+                        <div class="radar-panel route-panel" id="routePanel">
                             <div class="radar-panel-title">
                                 <span></span>
                                 ACTIVE ROUTE
                             </div>
 
-                            <div id="routeSummary">
-                                Sin destino.
-                            </div>
-
+                            <div id="routeSummary">Sin destino.</div>
                             <div id="routeInstructions"></div>
                         </div>
 
@@ -901,7 +961,6 @@
 
                     </aside>
                 </div>
-
             </section>
 
             <div class="hud-divider">
@@ -909,7 +968,6 @@
             </div>
 
             <section class="section">
-
                 <div class="section-heading">
                     <span class="section-number">02</span>
                     <h2 class="section-title">RADAR DETECTION</h2>
@@ -941,7 +999,6 @@
                         </div>
                     </div>
                 </div>
-
             </section>
 
             <div class="hud-divider">
@@ -949,30 +1006,22 @@
             </div>
 
             <section class="section">
-
                 <div class="section-heading">
                     <span class="section-number">03</span>
                     <h2 class="section-title">SYSTEM STATUS</h2>
                 </div>
 
                 <div class="archive-panel">
-
                     <div class="archive-status">
                         <span class="archive-dot"></span>
 
                         <div>
-                            <strong id="systemStatusBottom">
-                                ACTIVE
-                            </strong>
-
-                            <span>
-                                Radar detection and geolocation system initialized.
-                            </span>
+                            <strong id="systemStatusBottom">ACTIVE</strong>
+                            <span>Radar detection and geolocation system initialized.</span>
                         </div>
                     </div>
 
                     <div class="archive-metrics">
-
                         <div class="archive-metric">
                             <span>RADARS</span>
                             <strong id="radarCountBottom">00</strong>
@@ -987,10 +1036,8 @@
                             <span>STATUS</span>
                             <strong>ONLINE</strong>
                         </div>
-
                     </div>
                 </div>
-
             </section>
 
         </div>
@@ -1000,7 +1047,6 @@
             <span></span>
             <span></span>
         </div>
-
     </section>
 </main>
 
@@ -1008,75 +1054,44 @@
     <span>© 2026 KEOLEL</span>
 </footer>
 
-<script
-        src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-        crossorigin=""
-></script>
-
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/js/radar.js" defer></script>
 
 <script>
     document.addEventListener("DOMContentLoaded", () => {
         const mapPanel = document.getElementById("radarMapPanel");
         const fullscreenButton = document.getElementById("fullscreenButton");
-
-        const simulationToggle =
-            document.getElementById("simulationToggle");
-
-        const testController =
-            document.getElementById("testController");
-
-        const testControllerInfo =
-            document.getElementById("testControllerInfo");
-
-        const routePanel =
-            document.getElementById("routePanel");
-
-        /*
-         * ---------------------------------------------------------
-         * FULLSCREEN
-         * ---------------------------------------------------------
-         */
+        const simulationToggle = document.getElementById("simulationToggle");
+        const testController = document.getElementById("testController");
+        const testControllerInfo = document.getElementById("testControllerInfo");
+        const routePanel = document.getElementById("routePanel");
+        const searchInput = document.getElementById("destinationSearch");
+        const searchButton = document.getElementById("destinationSearchButton");
 
         const invalidateMapSize = () => {
             if (window.TrafficMap?.map) {
-                setTimeout(() => {
-                    TrafficMap.map.invalidateSize(true);
-                }, 200);
+                requestAnimationFrame(() => {
+                    setTimeout(() => {
+                        TrafficMap.map.invalidateSize(true);
+                    }, 150);
+                });
             }
         };
 
         const syncFullscreen = () => {
-            const active =
-                document.fullscreenElement === mapPanel;
+            const active = document.fullscreenElement === mapPanel;
 
-            document.body.classList.toggle(
-                "radar-is-fullscreen",
-                active
+            document.body.classList.toggle("radar-is-fullscreen", active);
+
+            fullscreenButton.textContent = active ? "×" : "⛶";
+            fullscreenButton.setAttribute(
+                "aria-label",
+                active ? "Salir de pantalla completa" : "Pantalla completa"
             );
-
-            if (active) {
-                fullscreenButton.textContent = "×";
-                fullscreenButton.setAttribute(
-                    "aria-label",
-                    "Salir de pantalla completa"
-                );
-                fullscreenButton.setAttribute(
-                    "title",
-                    "Salir de pantalla completa"
-                );
-            } else {
-                fullscreenButton.textContent = "⛶";
-                fullscreenButton.setAttribute(
-                    "aria-label",
-                    "Pantalla completa"
-                );
-                fullscreenButton.setAttribute(
-                    "title",
-                    "Pantalla completa"
-                );
-            }
+            fullscreenButton.setAttribute(
+                "title",
+                active ? "Salir de pantalla completa" : "Pantalla completa"
+            );
 
             invalidateMapSize();
         };
@@ -1093,9 +1108,6 @@
                     return;
                 }
 
-                /*
-                 * Fallback para navegadores sin Fullscreen API.
-                 */
                 mapPanel.style.position = "fixed";
                 mapPanel.style.inset = "0";
                 mapPanel.style.zIndex = "99999";
@@ -1103,37 +1115,22 @@
                 mapPanel.style.height = "100vh";
                 mapPanel.style.minHeight = "100vh";
 
-                document.body.classList.add(
-                    "radar-is-fullscreen"
-                );
-
+                document.body.classList.add("radar-is-fullscreen");
                 fullscreenButton.textContent = "×";
 
                 invalidateMapSize();
-
-            } catch (error) {
-                console.error(
-                    "Fullscreen error:",
-                    error
-                );
+            } catch {
+                document.body.classList.remove("radar-is-fullscreen");
             }
         });
 
-        document.addEventListener(
-            "fullscreenchange",
-            syncFullscreen
-        );
+        document.addEventListener("fullscreenchange", syncFullscreen);
 
-        /*
-         * ESC / fallback fullscreen.
-         */
         document.addEventListener("keydown", event => {
             if (
                 event.key === "Escape" &&
                 !document.fullscreenElement &&
-                document.body.classList.contains(
-                    "radar-is-fullscreen"
-                )
+                document.body.classList.contains("radar-is-fullscreen")
             ) {
                 mapPanel.style.position = "";
                 mapPanel.style.inset = "";
@@ -1142,352 +1139,162 @@
                 mapPanel.style.height = "";
                 mapPanel.style.minHeight = "";
 
-                document.body.classList.remove(
-                    "radar-is-fullscreen"
-                );
-
+                document.body.classList.remove("radar-is-fullscreen");
                 fullscreenButton.textContent = "⛶";
 
                 invalidateMapSize();
             }
         });
 
-        /*
-         * ---------------------------------------------------------
-         * TEST / SIMULATION MODE
-         * ---------------------------------------------------------
-         */
-
         simulationToggle.addEventListener("change", () => {
             const active = simulationToggle.checked;
 
-            testController.classList.toggle(
-                "active",
-                active
-            );
+            testController.classList.toggle("active", active);
+            testControllerInfo.classList.toggle("active", active);
 
-            testControllerInfo.classList.toggle(
-                "active",
-                active
-            );
-
-            if (!window.TrafficMap) {
-                return;
-            }
+            if (!window.TrafficMap) return;
 
             if (active) {
-                if (
-                    typeof TrafficMap.startSimulation ===
-                    "function"
-                ) {
+                if (typeof TrafficMap.startSimulation === "function") {
                     TrafficMap.startSimulation();
                 }
             } else {
-                if (
-                    typeof TrafficMap.stopSimulation ===
-                    "function"
-                ) {
+                if (typeof TrafficMap.stopSimulation === "function") {
                     TrafficMap.stopSimulation();
                 }
 
-                if (
-                    typeof TrafficMap.requestLocation ===
-                    "function"
-                ) {
+                if (typeof TrafficMap.requestLocation === "function") {
                     TrafficMap.requestLocation(true);
                 }
             }
         });
 
-        /*
-         * ---------------------------------------------------------
-         * SIMULATION CONTROLLER
-         * ---------------------------------------------------------
-         */
+        document.querySelectorAll("[data-direction]").forEach(button => {
+            button.addEventListener("click", () => {
+                if (!window.TrafficMap?.simulation?.active) return;
 
-        document
-            .querySelectorAll("[data-direction]")
-            .forEach(button => {
+                const simulation = TrafficMap.simulation;
+                const direction = button.dataset.direction;
+                const meters = 20;
 
-                button.addEventListener("click", () => {
+                let bearing = Number(simulation.heading) || 0;
 
-                    if (
-                        !window.TrafficMap?.simulation?.active
-                    ) {
-                        return;
-                    }
+                if (direction === "down") bearing = (bearing + 180) % 360;
+                if (direction === "left") bearing = (bearing + 270) % 360;
+                if (direction === "right") bearing = (bearing + 90) % 360;
 
-                    const simulation =
-                        TrafficMap.simulation;
+                if (typeof TrafficMap.destinationPoint !== "function") return;
 
-                    const direction =
-                        button.dataset.direction;
+                const next = TrafficMap.destinationPoint(
+                    simulation.latitude,
+                    simulation.longitude,
+                    bearing,
+                    meters
+                );
 
-                    const meters = 20;
+                simulation.latitude = next.latitude;
+                simulation.longitude = next.longitude;
 
-                    let bearing =
-                        Number(simulation.heading) || 0;
+                if (typeof TrafficMap.updateUserMarker === "function") {
+                    TrafficMap.updateUserMarker(
+                        simulation.latitude,
+                        simulation.longitude,
+                        5
+                    );
+                }
 
-                    if (direction === "down") {
-                        bearing =
-                            (bearing + 180) % 360;
-                    }
+                if (
+                    simulation.radar &&
+                    typeof TrafficMap.distanceMeters === "function"
+                ) {
+                    simulation.distance = TrafficMap.distanceMeters(
+                        simulation.latitude,
+                        simulation.longitude,
+                        simulation.radar.latitude,
+                        simulation.radar.longitude
+                    );
+                }
 
-                    if (direction === "left") {
-                        bearing =
-                            (bearing + 270) % 360;
-                    }
+                if (typeof TrafficMap.checkRadars === "function") {
+                    TrafficMap.checkRadars(
+                        simulation.latitude,
+                        simulation.longitude,
+                        simulation.heading
+                    );
+                }
 
-                    if (direction === "right") {
-                        bearing =
-                            (bearing + 90) % 360;
-                    }
+                if (typeof TrafficMap.updateSimulationUI === "function") {
+                    TrafficMap.updateSimulationUI();
+                }
 
-                    if (
-                        typeof TrafficMap.destinationPoint !==
-                        "function"
-                    ) {
-                        return;
-                    }
-
-                    const next =
-                        TrafficMap.destinationPoint(
-                            simulation.latitude,
-                            simulation.longitude,
-                            bearing,
-                            meters
-                        );
-
-                    simulation.latitude =
-                        next.latitude;
-
-                    simulation.longitude =
-                        next.longitude;
-
-                    if (
-                        typeof TrafficMap.updateUserMarker ===
-                        "function"
-                    ) {
-                        TrafficMap.updateUserMarker(
-                            simulation.latitude,
-                            simulation.longitude,
-                            5
-                        );
-                    }
-
-                    if (
-                        simulation.radar &&
-                        typeof TrafficMap.distanceMeters ===
-                        "function"
-                    ) {
-                        simulation.distance =
-                            TrafficMap.distanceMeters(
-                                simulation.latitude,
-                                simulation.longitude,
-                                simulation.radar.latitude,
-                                simulation.radar.longitude
-                            );
-                    }
-
-                    if (
-                        typeof TrafficMap.checkRadars ===
-                        "function"
-                    ) {
-                        TrafficMap.checkRadars(
-                            simulation.latitude,
-                            simulation.longitude,
-                            simulation.heading
-                        );
-                    }
-
-                    if (
-                        typeof TrafficMap.updateSimulationUI ===
-                        "function"
-                    ) {
-                        TrafficMap.updateSimulationUI();
-                    }
-
-                    if (TrafficMap.map) {
-                        TrafficMap.map.panTo(
-                            [
-                                simulation.latitude,
-                                simulation.longitude
-                            ],
-                            {
-                                animate: true,
-                                duration: 0.25
-                            }
-                        );
-                    }
-                });
+                if (TrafficMap.map) {
+                    TrafficMap.map.panTo(
+                        [simulation.latitude, simulation.longitude],
+                        {
+                            animate: true,
+                            duration: 0.25
+                        }
+                    );
+                }
             });
-
-        /*
-         * ---------------------------------------------------------
-         * SYNC DE ESTADOS
-         *
-         * Ya no hay IDs duplicados.
-         * radar.js puede seguir trabajando con los IDs principales
-         * y aquí copiamos sus valores a los elementos secundarios.
-         * ---------------------------------------------------------
-         */
+        });
 
         const syncValues = () => {
-
-            const gpsHeader =
-                document.getElementById(
-                    "gpsStateHeader"
-                );
-
-            const radarHeader =
-                document.getElementById(
-                    "radarCountHeader"
-                );
-
-            const gpsSidebar =
-                document.getElementById(
-                    "gpsStateSidebar"
-                );
-
-            const radarSidebar =
-                document.getElementById(
-                    "radarCountSidebar"
-                );
-
-            const gpsBottom =
-                document.getElementById(
-                    "gpsStateBottom"
-                );
-
-            const radarBottom =
-                document.getElementById(
-                    "radarCountBottom"
-                );
-
-            /*
-             * radar.js normalmente trabaja con:
-             * #gpsState
-             * #radarCount
-             *
-             * Como esos IDs ahora solo pueden existir una vez,
-             * usamos esos elementos como fuente si existen.
-             */
-
-            const sourceGps =
-                document.getElementById("gpsState");
-
-            const sourceRadar =
-                document.getElementById("radarCount");
+            const sourceGps = document.getElementById("gpsState");
+            const sourceRadar = document.getElementById("radarCount");
 
             if (sourceGps) {
+                const value = sourceGps.textContent;
 
-                const value =
-                    sourceGps.textContent;
-
-                if (gpsHeader) {
-                    gpsHeader.textContent = value;
-                }
-
-                if (gpsSidebar) {
-                    gpsSidebar.textContent = value;
-                }
-
-                if (gpsBottom) {
-                    gpsBottom.textContent = value;
-                }
+                document.getElementById("gpsStateHeader").textContent = value;
+                document.getElementById("gpsStateSidebar").textContent = value;
+                document.getElementById("gpsStateBottom").textContent = value;
             }
 
             if (sourceRadar) {
+                const value = sourceRadar.textContent;
 
-                const value =
-                    sourceRadar.textContent;
-
-                if (radarHeader) {
-                    radarHeader.textContent = value;
-                }
-
-                if (radarSidebar) {
-                    radarSidebar.textContent = value;
-                }
-
-                if (radarBottom) {
-                    radarBottom.textContent = value;
-                }
+                document.getElementById("radarCountHeader").textContent = value;
+                document.getElementById("radarCountSidebar").textContent = value;
+                document.getElementById("radarCountBottom").textContent = value;
             }
         };
 
-        /*
-         * ---------------------------------------------------------
-         * DESTINATION SEARCH
-         * ---------------------------------------------------------
-         */
-
-        const searchInput =
-            document.getElementById(
-                "destinationSearch"
-            );
-
-        const searchButton =
-            document.getElementById(
-                "destinationSearchButton"
-            );
-
         const searchDestination = async () => {
+            const query = searchInput.value.trim();
 
-            const query =
-                searchInput.value.trim();
-
-            if (!query) {
-                return;
-            }
+            if (!query) return;
 
             searchButton.disabled = true;
             searchButton.textContent = "…";
 
             try {
-
-                const response =
-                    await fetch(
-                        "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=uy&q=" +
-                        encodeURIComponent(query),
-                        {
-                            headers: {
-                                Accept:
-                                    "application/json"
-                            }
+                const response = await fetch(
+                    "https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=uy&q=" +
+                    encodeURIComponent(query),
+                    {
+                        headers: {
+                            Accept: "application/json"
                         }
-                    );
+                    }
+                );
 
                 if (!response.ok) {
-                    throw new Error(
-                        "No se pudo buscar el destino."
-                    );
+                    throw new Error("Search failed");
                 }
 
-                const results =
-                    await response.json();
+                const results = await response.json();
 
                 if (!results.length) {
-
-                    if (
-                        window.TrafficMap?.showStatus
-                    ) {
-                        TrafficMap.showStatus(
-                            "DESTINO NO ENCONTRADO"
-                        );
+                    if (window.TrafficMap?.showStatus) {
+                        TrafficMap.showStatus("DESTINO NO ENCONTRADO");
                     }
-
                     return;
                 }
 
-                const result =
-                    results[0];
-
-                const latitude =
-                    Number(result.lat);
-
-                const longitude =
-                    Number(result.lon);
+                const result = results[0];
+                const latitude = Number(result.lat);
+                const longitude = Number(result.lon);
 
                 if (
                     !Number.isFinite(latitude) ||
@@ -1497,53 +1304,40 @@
                 }
 
                 if (window.TrafficMap?.map) {
-
                     TrafficMap.map.setView(
-                        [
-                            latitude,
-                            longitude
-                        ],
-                        16
+                        [latitude, longitude],
+                        16,
+                        {
+                            animate: true
+                        }
                     );
+
+                    setTimeout(() => {
+                        TrafficMap.map.invalidateSize(true);
+                    }, 200);
                 }
 
                 if (window.TrafficMap) {
-
                     TrafficMap.destination = {
                         latitude,
                         longitude,
-                        name:
-                        result.display_name
+                        name: result.display_name
                     };
                 }
 
-                routePanel.classList.add(
-                    "active"
-                );
+                routePanel.classList.add("active");
 
-                const summary =
-                    document.getElementById(
-                        "routeSummary"
-                    );
-
+                const summary = document.getElementById("routeSummary");
                 if (summary) {
-                    summary.textContent =
-                        result.display_name;
+                    summary.textContent = result.display_name;
                 }
 
-                const routeState =
-                    document.getElementById(
-                        "routeState"
-                    );
-
+                const routeState = document.getElementById("routeState");
                 if (routeState) {
-                    routeState.textContent =
-                        "DESTINATION";
+                    routeState.textContent = "DESTINATION";
                 }
 
-                if (
-                    window.TrafficMap?.showStatus
-                ) {
+                if (window.TrafficMap?.showStatus) {
                     TrafficMap.showStatus(
                         "DESTINO SELECCIONADO · CALCULANDO RUTA"
                     );
@@ -1551,79 +1345,46 @@
 
                 if (
                     window.TrafficMap &&
-                    typeof TrafficMap.calculateRouteToDestination ===
-                    "function"
+                    typeof TrafficMap.calculateRouteToDestination === "function"
                 ) {
-
-                    await TrafficMap
-                        .calculateRouteToDestination(
-                            latitude,
-                            longitude
-                        );
-                }
-
-            } catch (error) {
-
-                console.error(error);
-
-                if (
-                    window.TrafficMap?.showStatus
-                ) {
-                    TrafficMap.showStatus(
-                        "ERROR BUSCANDO DESTINO"
+                    await TrafficMap.calculateRouteToDestination(
+                        latitude,
+                        longitude
                     );
                 }
-
+            } catch {
+                if (window.TrafficMap?.showStatus) {
+                    TrafficMap.showStatus("ERROR BUSCANDO DESTINO");
+                }
             } finally {
-
-                searchButton.disabled =
-                    false;
-
-                searchButton.textContent =
-                    "→";
+                searchButton.disabled = false;
+                searchButton.textContent = "→";
             }
         };
 
-        searchButton.addEventListener(
-            "click",
-            searchDestination
-        );
+        searchButton.addEventListener("click", searchDestination);
 
-        searchInput.addEventListener(
-            "keydown",
-            event => {
-
-                if (event.key === "Enter") {
-
-                    event.preventDefault();
-
-                    searchDestination();
-                }
+        searchInput.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                searchDestination();
             }
-        );
+        });
 
-        /*
-         * ---------------------------------------------------------
-         * INITIAL MAP RESIZE
-         * ---------------------------------------------------------
-         */
+        window.addEventListener("resize", invalidateMapSize);
+        window.addEventListener("orientationchange", () => {
+            setTimeout(invalidateMapSize, 350);
+        });
 
         setTimeout(() => {
-
             if (window.TrafficMap?.map) {
-                TrafficMap.map.invalidateSize(
-                    true
-                );
+                TrafficMap.map.invalidateSize(true);
             }
 
             syncValues();
+        }, 1000);
 
-        }, 800);
-
-        setInterval(
-            syncValues,
-            500
-        );
+        setInterval(syncValues, 500);
     });
 </script>
 
