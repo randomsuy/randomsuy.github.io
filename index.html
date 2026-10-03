@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Radar</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-
     <style>
         * {
             box-sizing: border-box;
@@ -43,9 +42,12 @@
             border-radius: 12px;
             background: rgba(10, 15, 18, .92);
             box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
+            max-width: calc(100vw - 20px);
+            overflow-x: auto;
         }
 
         #controls button {
+            flex: 0 0 auto;
             border: 0;
             border-radius: 8px;
             padding: 10px 14px;
@@ -118,17 +120,35 @@
             font-weight: 800;
         }
 
+        .keolel-camera-marker,
+        .keolel-radar-marker,
+        .keolel-user-marker {
+            background: transparent !important;
+            border: 0 !important;
+        }
+
         .leaflet-control-attribution {
             font-size: 9px;
         }
 
-        .montevideo-camera-marker {
-            background: transparent !important;
-            border: 0 !important;
+        @media (max-width: 600px) {
+            #controls {
+                width: calc(100vw - 20px);
+                justify-content: flex-start;
+            }
+
+            #controls button {
+                padding: 9px 11px;
+                font-size: 11px;
+            }
+
+            #status {
+                font-size: 10px;
+                max-width: calc(100vw - 24px);
+            }
         }
     </style>
 </head>
-
 <body>
 
 <div id="map"></div>
@@ -151,91 +171,56 @@
 <script src="traffic-map.js"></script>
 
 <script>
-    document.addEventListener("DOMContentLoaded", () => {
-        const simulationButton =
-            document.getElementById("simulationButton");
+document.addEventListener("DOMContentLoaded", () => {
+    const simulationButton = document.getElementById("simulationButton");
+    const moveButton = document.getElementById("moveButton");
+    const resetButton = document.getElementById("resetButton");
+    const gpsButton = document.getElementById("gpsButton");
 
-        const moveButton =
-            document.getElementById("moveButton");
+    function updateButtons() {
+        const active =
+            window.TrafficMap?.simulation?.active === true;
 
-        const resetButton =
-            document.getElementById("resetButton");
+        simulationButton.classList.toggle("active", active);
+        moveButton.classList.toggle("active", active);
+        moveButton.disabled = !active;
+    }
 
-        const gpsButton =
-            document.getElementById("gpsButton");
-
-        function updateButtons() {
-            const active =
-                window.TrafficMap?.simulation?.active === true;
-
-            simulationButton.classList.toggle(
-                "active",
-                active
-            );
-
-            moveButton.classList.toggle(
-                "active",
-                active
-            );
-
-            moveButton.disabled =
-                !active;
+    simulationButton.addEventListener("click", () => {
+        if (!window.TrafficMap) {
+            return;
         }
 
-        simulationButton.addEventListener(
-            "click",
-            () => {
-                if (!window.TrafficMap) {
-                    return;
-                }
-
-                if (
-                    window.TrafficMap.simulation.active
-                ) {
-                    window.TrafficMap.stopSimulation();
-                } else {
-                    window.TrafficMap.startSimulation();
-                }
-
-                updateButtons();
-            }
-        );
-
-        moveButton.addEventListener(
-            "click",
-            () => {
-                if (
-                    !window.TrafficMap?.simulation?.active
-                ) {
-                    return;
-                }
-
-                window.TrafficMap.simulationStep();
-            }
-        );
-
-        resetButton.addEventListener(
-            "click",
-            () => {
-                window.TrafficMap?.resetSimulation();
-                updateButtons();
-            }
-        );
-
-        gpsButton.addEventListener(
-            "click",
-            () => {
-                window.TrafficMap?.requestLocation(true);
-            }
-        );
-
-        setInterval(
-            updateButtons,
-            250
-        );
+        if (window.TrafficMap.simulation.active) {
+            window.TrafficMap.stopSimulation();
+        } else {
+            window.TrafficMap.startSimulation();
+        }
 
         updateButtons();
     });
+
+    moveButton.addEventListener("click", () => {
+        if (!window.TrafficMap?.simulation?.active) {
+            return;
+        }
+
+        window.TrafficMap.simulationStep();
+    });
+
+    resetButton.addEventListener("click", () => {
+        window.TrafficMap?.resetSimulation();
+        updateButtons();
+    });
+
+    gpsButton.addEventListener("click", () => {
+        window.TrafficMap?.requestLocation(true);
+    });
+
+    setInterval(updateButtons, 250);
+
+    updateButtons();
+});
 </script>
 
 </body>
