@@ -3,14 +3,11 @@
 
     const CONFIG = {
         map: {
-            center: [-34.9011, -56.1645],
-            zoom: 13,
+            defaultCenter: [-34.9011, -56.1645],
+            defaultZoom: 13,
+            userZoom: 17,
             minZoom: 10,
-            maxZoom: 19,
-            bounds: [
-                [-35.08, -56.35],
-                [-34.70, -55.90]
-            ]
+            maxZoom: 19
         },
 
         gps: {
@@ -26,15 +23,16 @@
             refreshInterval: 300000
         },
 
-        cameras: {
-            refreshInterval: 300000,
-            source:
-                "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
-            proxy:
-                "https://r.jina.ai/http://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito",
-            geocoder:
-                "https://nominatim.openstreetmap.org/search",
-            cacheKey: "trafficmap_official_cameras_v4"
+        camera: {
+            warningDistance: 300,
+            directionAngle: 55,
+            refreshInterval: 600000
+        },
+
+        deadEnd: {
+            warningDistance: 180,
+            directionAngle: 55,
+            refreshInterval: 600000
         },
 
         simulation: {
@@ -43,7 +41,8 @@
         },
 
         services: {
-            overpass: "https://overpass-api.de/api/interpreter"
+            overpass: "https://overpass-api.de/api/interpreter",
+            cameraPage: "https://montevideo.gub.uy/tipo/area-tematica/movilidad/gestion-de-la-movilidad/camaras-de-monitoreo-del-transito"
         }
     };
 
@@ -54,31 +53,48 @@
         accuracyCircle: null,
         radarLayer: null,
         cameraLayer: null,
-        roadLayer: null,
+        deadEndLayer: null,
+
         radars: [],
         cameras: [],
+        deadEnds: [],
+
         radarCount: 0,
         cameraCount: 0,
+        deadEndCount: 0,
+
         locationWatchId: null,
         locationActive: false,
         lastPosition: null,
+
         warningRadar: null,
         warningCamera: null,
+        warningDeadEnd: null,
+
         radarRefreshTimer: null,
         cameraRefreshTimer: null,
-        lastRadarQuery: 0,
-        lastSpeech: 0,
-        heading: 0,
-        headingSource: "none",
-        orientationReady: false,
-        orientationPermission: false,
-        cameraLoading: false,
-        radarLoading: false,
+        deadEndRefreshTimer: null,
 
-        settings: {
-            voice: true,
-            radarAlert: true,
-            cameraAlert: true
+        lastRadarQuery: null,
+        lastCameraQuery: null,
+        lastDeadEndQuery: null,
+
+        speechEnabled: true,
+        radarAlertEnabled: true,
+        cameraAlertEnabled: true,
+        deadEndAlertEnabled: true,
+
+        announced: {
+            radar: null,
+            camera: null,
+            deadEnd: null
+        },
+
+        orientation: {
+            active: false,
+            heading: null,
+            permission: "unknown",
+            listener: null
         },
 
         simulation: {
@@ -88,6 +104,8 @@
             heading: 0,
             speed: CONFIG.simulation.defaultSpeed,
             radar: null,
+            camera: null,
+            deadEnd: null,
             distance: null
         }
     };
@@ -97,14 +115,15 @@
     }
 
     function safeNumber(value, fallback = 0) {
-        const n = Number(value);
-        return Number.isFinite(n) ? n : fallback;
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
     }
 
     function setText(id, value) {
-        const el = byId(id);
-        if (el) {
-            el.textContent = String(value);
+        const element = byId(id);
+
+        if (element) {
+            element.textContent = String(value);
         }
     }
 
@@ -112,135 +131,246 @@
         setText("status", message);
     }
 
-    function normalizeText(value) {
-        return String(value || "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
+    function normalizeHeading(value) {
+        const number = Number(value);
 
-    function distanceMeters(lat1, lon1, lat2, lon2) {
-        const R = 6371000;
-        const a1 = Number(lat1) * Math.PI / 180;
-        const a2 = Number(lat2) * Math.PI / 180;
-        const dLat = (Number(lat2) - Number(lat1)) * Math.PI / 180;
-        const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
+        if (!Number.isFinite(number)) {
+            return null;
+        }
 
-        const a =
-            Math.sin(dLat / 2) ** 2 +
-            Math.cos(a1) *
-            Math.cos(a2) *
-            Math.sin(dLon / 2) ** 2;
-
-        return R * 2 * Math.atan2(
-            Math.sqrt(a),
-            Math.sqrt(1 - a)
-        );
-    }
-
-    function bearingBetween(lat1, lon1, lat2, lon2) {
-        const a1 = Number(lat1) * Math.PI / 180;
-        const a2 = Number(lat2) * Math.PI / 180;
-        const dLon = (Number(lon2) - Number(lon1)) * Math.PI / 180;
-
-        const y = Math.sin(dLon) * Math.cos(a2);
-
-        const x =
-            Math.cos(a1) * Math.sin(a2) -
-            Math.sin(a1) * Math.cos(a2) * Math.cos(dLon);
-
-        return (
-            Math.atan2(y, x) * 180 / Math.PI + 360
-        ) % 360;
+        return ((number % 360) + 360) % 360;
     }
 
     function angleDifference(a, b) {
-        let d = Math.abs(Number(a) - Number(b)) % 360;
-        return d > 180 ? 360 - d : d;
-    }
-
-    function destinationPoint(lat, lon, bearing, distance) {
-        const R = 6371000;
-        const phi1 = Number(lat) * Math.PI / 180;
-        const lambda1 = Number(lon) * Math.PI / 180;
-        const theta = Number(bearing) * Math.PI / 180;
-        const delta = Number(distance) / R;
-
-        const phi2 = Math.asin(
-            Math.sin(phi1) * Math.cos(delta) +
-            Math.cos(phi1) * Math.sin(delta) * Math.cos(theta)
+        const x = Math.abs(
+            normalizeHeading(a) -
+            normalizeHeading(b)
         );
 
-        const lambda2 =
-            lambda1 +
+        return Math.min(x, 360 - x);
+    }
+
+    function isAhead(
+        latitude,
+        longitude,
+        targetLatitude,
+        targetLongitude,
+        heading,
+        maxAngle = 55
+    ) {
+        const bearing =
+            bearingBetween(
+                latitude,
+                longitude,
+                targetLatitude,
+                targetLongitude
+            );
+
+        return (
+            angleDifference(
+                heading,
+                bearing
+            ) <= maxAngle
+        );
+    }
+
+    function distanceMeters(
+        latitude1,
+        longitude1,
+        latitude2,
+        longitude2
+    ) {
+        const R = 6371000;
+
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
+
+        const deltaLat =
+            (
+                Number(latitude2) -
+                Number(latitude1)
+            ) *
+            Math.PI / 180;
+
+        const deltaLng =
+            (
+                Number(longitude2) -
+                Number(longitude1)
+            ) *
+            Math.PI / 180;
+
+        const a =
+            Math.sin(deltaLat / 2) ** 2 +
+            Math.cos(lat1) *
+            Math.cos(lat2) *
+            Math.sin(deltaLng / 2) ** 2;
+
+        const c =
+            2 *
             Math.atan2(
-                Math.sin(theta) * Math.sin(delta) * Math.cos(phi1),
-                Math.cos(delta) - Math.sin(phi1) * Math.sin(phi2)
+                Math.sqrt(a),
+                Math.sqrt(1 - a)
+            );
+
+        return R * c;
+    }
+
+    function bearingBetween(
+        latitude1,
+        longitude1,
+        latitude2,
+        longitude2
+    ) {
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
+
+        const deltaLng =
+            (
+                Number(longitude2) -
+                Number(longitude1)
+            ) *
+            Math.PI / 180;
+
+        const y =
+            Math.sin(deltaLng) *
+            Math.cos(lat2);
+
+        const x =
+            Math.cos(lat1) *
+            Math.sin(lat2) -
+            Math.sin(lat1) *
+            Math.cos(lat2) *
+            Math.cos(deltaLng);
+
+        const angle =
+            Math.atan2(y, x) *
+            180 /
+            Math.PI;
+
+        return normalizeHeading(angle);
+    }
+
+    function destinationPoint(
+        latitude,
+        longitude,
+        bearing,
+        distance
+    ) {
+        const R = 6371000;
+
+        const lat1 =
+            Number(latitude) *
+            Math.PI / 180;
+
+        const lon1 =
+            Number(longitude) *
+            Math.PI / 180;
+
+        const theta =
+            Number(bearing) *
+            Math.PI / 180;
+
+        const delta =
+            Number(distance) / R;
+
+        const lat2 =
+            Math.asin(
+                Math.sin(lat1) *
+                Math.cos(delta) +
+                Math.cos(lat1) *
+                Math.sin(delta) *
+                Math.cos(theta)
+            );
+
+        const lon2 =
+            lon1 +
+            Math.atan2(
+                Math.sin(theta) *
+                Math.sin(delta) *
+                Math.cos(lat1),
+                Math.cos(delta) -
+                Math.sin(lat1) *
+                Math.sin(lat2)
             );
 
         return {
-            latitude: phi2 * 180 / Math.PI,
-            longitude: lambda2 * 180 / Math.PI
+            latitude:
+                lat2 *
+                180 /
+                Math.PI,
+
+            longitude:
+                lon2 *
+                180 /
+                Math.PI
         };
     }
 
     function createUserIcon() {
         return L.divIcon({
-            className: "traffic-user-icon",
+            className: "traffic-user-marker",
+
             html: `
                 <div style="
                     width:20px;
                     height:20px;
                     border-radius:50%;
-                    background:#20d8ff;
-                    border:3px solid #071014;
+                    background:#29d8ff;
+                    border:3px solid #06151b;
                     box-shadow:
-                        0 0 0 5px rgba(32,216,255,.18),
-                        0 0 22px rgba(32,216,255,.95);
+                        0 0 0 4px rgba(41,216,255,.22),
+                        0 0 22px rgba(41,216,255,.95);
                 "></div>
             `,
+
             iconSize: [26, 26],
             iconAnchor: [13, 13]
         });
     }
 
     function createRadarIcon(limit) {
-        const speed =
-            Number.isFinite(Number(limit)) && Number(limit) > 0
-                ? Number(limit)
-                : "—";
+        const speed = Number(limit);
+
+        const label =
+            Number.isFinite(speed) && speed > 0
+                ? speed
+                : "RADAR";
 
         return L.divIcon({
-            className: "traffic-radar-icon",
+            className: "traffic-radar-marker",
+
             html: `
                 <div style="
                     width:42px;
                     height:42px;
-                    border-radius:50%;
                     display:flex;
                     align-items:center;
                     justify-content:center;
-                    position:relative;
-                    background:#160708;
-                    border:3px solid #ff3131;
-                    color:#fff;
+                    border-radius:50%;
+                    background:#240b0b;
+                    border:3px solid #ff3838;
+                    color:#ff6767;
                     font-family:Arial,sans-serif;
-                    font-size:11px;
+                    font-size:9px;
                     font-weight:900;
                     box-shadow:
-                        0 0 0 4px rgba(255,49,49,.13),
-                        0 0 20px rgba(255,49,49,.8);
+                        0 0 10px rgba(255,56,56,.95),
+                        0 0 28px rgba(255,56,56,.45);
                 ">
-                    ${speed}
-                    <span style="
-                        position:absolute;
-                        bottom:-7px;
-                        font-size:7px;
-                        color:#ff6666;
-                    ">KM/H</span>
+                    ${label}
                 </div>
             `,
+
             iconSize: [42, 42],
             iconAnchor: [21, 21]
         });
@@ -248,82 +378,136 @@
 
     function createCameraIcon() {
         return L.divIcon({
-            className: "traffic-camera-icon",
+            className: "traffic-camera-marker",
+
             html: `
                 <div style="
-                    width:30px;
-                    height:30px;
-                    border-radius:9px;
+                    width:38px;
+                    height:38px;
                     display:flex;
                     align-items:center;
                     justify-content:center;
-                    background:#ff8a00;
-                    border:2px solid #fff3df;
+                    border-radius:12px;
+                    background:#3a2100;
+                    border:3px solid #ff9d00;
+                    color:#ffb52e;
+                    font-size:19px;
                     box-shadow:
-                        0 0 0 3px rgba(255,138,0,.22),
-                        0 0 16px rgba(255,138,0,.9);
-                    color:#201000;
-                    font-size:15px;
-                    font-weight:900;
+                        0 0 12px rgba(255,157,0,.9),
+                        0 0 25px rgba(255,157,0,.4);
                 ">●</div>
             `,
-            iconSize: [30, 30],
-            iconAnchor: [15, 15]
+
+            iconSize: [38, 38],
+            iconAnchor: [19, 19]
+        });
+    }
+
+    function createDeadEndIcon() {
+        return L.divIcon({
+            className: "traffic-dead-end-marker",
+
+            html: `
+                <div style="
+                    width:32px;
+                    height:32px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    border-radius:50%;
+                    background:#251d00;
+                    border:3px solid #ffd000;
+                    color:#ffd000;
+                    font-family:Arial,sans-serif;
+                    font-size:16px;
+                    font-weight:900;
+                    box-shadow:
+                        0 0 10px rgba(255,208,0,.8);
+                ">!</div>
+            `,
+
+            iconSize: [32, 32],
+            iconAnchor: [16, 16]
         });
     }
 
     function initializeMap() {
-        const mapElement = byId("map");
-
-        if (!window.L || !mapElement) {
+        if (!window.L) {
             showStatus("LEAFLET NO DISPONIBLE");
             return false;
         }
 
-        state.map = L.map(mapElement, {
-            center: CONFIG.map.center,
-            zoom: CONFIG.map.zoom,
-            minZoom: CONFIG.map.minZoom,
-            maxZoom: CONFIG.map.maxZoom,
-            maxBounds: CONFIG.map.bounds,
-            maxBoundsViscosity: 0.8,
-            zoomControl: false,
-            attributionControl: true,
-            preferCanvas: true
-        });
+        const mapElement = byId("map");
 
-        L.control.zoom({
-            position: "bottomright"
-        }).addTo(state.map);
+        if (!mapElement) {
+            return false;
+        }
+
+        state.map =
+            L.map(
+                mapElement,
+                {
+                    center:
+                        CONFIG.map.defaultCenter,
+                    zoom:
+                        CONFIG.map.defaultZoom,
+                    minZoom:
+                        CONFIG.map.minZoom,
+                    maxZoom:
+                        CONFIG.map.maxZoom,
+                    zoomControl: true,
+                    attributionControl: true,
+                    preferCanvas: true
+                }
+            );
 
         L.tileLayer(
             "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
             {
-                maxZoom: CONFIG.map.maxZoom,
-                attribution: "&copy; OpenStreetMap contributors"
+                maxZoom: 19,
+                attribution:
+                    "&copy; OpenStreetMap contributors"
             }
         ).addTo(state.map);
 
-        state.roadLayer = L.layerGroup().addTo(state.map);
-        state.radarLayer = L.layerGroup().addTo(state.map);
-        state.cameraLayer = L.layerGroup().addTo(state.map);
+        state.radarLayer =
+            L.layerGroup().addTo(state.map);
 
-        state.map.on("click", event => {
-            if (!state.simulation.active) {
-                return;
+        state.cameraLayer =
+            L.layerGroup().addTo(state.map);
+
+        state.deadEndLayer =
+            L.layerGroup().addTo(state.map);
+
+        state.map.on(
+            "click",
+            event => {
+                if (!state.simulation.active) {
+                    return;
+                }
+
+                state.simulation.latitude =
+                    event.latlng.lat;
+
+                state.simulation.longitude =
+                    event.latlng.lng;
+
+                state.announced.radar = null;
+                state.announced.camera = null;
+                state.announced.deadEnd = null;
+
+                updateSimulationPosition();
             }
-
-            state.simulation.latitude = event.latlng.lat;
-            state.simulation.longitude = event.latlng.lng;
-
-            updateSimulationPosition();
-        });
+        );
 
         return true;
     }
 
     function requestLocation(force = false) {
-        if (state.simulation.active && !force) {
+        if (
+            state.simulation.active &&
+            !force
+        ) {
             return;
         }
 
@@ -333,7 +517,7 @@
             return;
         }
 
-        showStatus("OBTENIENDO GPS...");
+        showStatus("OBTENIENDO UBICACIÓN...");
 
         navigator.geolocation.getCurrentPosition(
             handlePosition,
@@ -345,7 +529,9 @@
     }
 
     function startLocationWatch() {
-        if (state.locationWatchId !== null) {
+        if (
+            state.locationWatchId !== null
+        ) {
             return;
         }
 
@@ -362,30 +548,43 @@
     }
 
     function handlePosition(position) {
-        if (!position || !position.coords) {
+        if (!position?.coords) {
             return;
         }
 
-        const latitude = safeNumber(position.coords.latitude);
-        const longitude = safeNumber(position.coords.longitude);
-        const accuracy = safeNumber(position.coords.accuracy, 0);
-        const speed = safeNumber(position.coords.speed, 0);
+        const latitude =
+            safeNumber(
+                position.coords.latitude
+            );
 
-        let heading = Number(position.coords.heading);
+        const longitude =
+            safeNumber(
+                position.coords.longitude
+            );
 
-        if (
-            !Number.isFinite(heading) ||
-            heading < 0
-        ) {
-            heading = state.heading;
-        }
+        const accuracy =
+            safeNumber(
+                position.coords.accuracy,
+                0
+            );
 
-        if (
-            Number.isFinite(heading) &&
-            speed > 0.8
-        ) {
-            state.heading = heading;
-            state.headingSource = "gps";
+        const speed =
+            safeNumber(
+                position.coords.speed,
+                0
+            );
+
+        let heading =
+            Number(
+                position.coords.heading
+            );
+
+        if (!Number.isFinite(heading)) {
+            heading =
+                state.orientation.heading ??
+                state.lastPosition?.heading ??
+                state.simulation.heading ??
+                0;
         }
 
         state.lastPosition = {
@@ -399,24 +598,37 @@
 
         state.locationActive = true;
 
-        updateUserMarker(latitude, longitude);
+        updateUserMarker(
+            latitude,
+            longitude
+        );
 
         if (!state.simulation.active) {
-            const zoom = state.map?.getZoom();
+            const currentZoom =
+                state.map?.getZoom();
 
             if (
                 state.map &&
-                (!state.userMarker || zoom < 14)
+                (
+                    !state.userMarker ||
+                    currentZoom < 14
+                )
             ) {
                 state.map.setView(
                     [latitude, longitude],
-                    16,
-                    { animate: true }
+                    CONFIG.map.userZoom,
+                    {
+                        animate: true
+                    }
                 );
             }
         }
 
-        checkNearbyAlerts(latitude, longitude);
+        checkAllAlerts(
+            latitude,
+            longitude,
+            heading
+        );
 
         showStatus(
             `GPS ACTIVO · ${state.radarCount} RADARES · ${state.cameraCount} CÁMARAS`
@@ -426,18 +638,30 @@
     function handlePositionError(error) {
         state.locationActive = false;
 
+        let message = "ERROR DE GPS";
+
         if (error?.code === 1) {
-            showStatus("PERMISO GPS DENEGADO");
-        } else if (error?.code === 2) {
-            showStatus("GPS NO DISPONIBLE");
-        } else if (error?.code === 3) {
-            showStatus("TIMEOUT GPS");
-        } else {
-            showStatus("ERROR GPS");
+            message =
+                "PERMISO GPS DENEGADO";
         }
+
+        if (error?.code === 2) {
+            message =
+                "UBICACIÓN NO DISPONIBLE";
+        }
+
+        if (error?.code === 3) {
+            message =
+                "TIMEOUT DE GPS";
+        }
+
+        showStatus(message);
     }
 
-    function updateUserMarker(latitude, longitude) {
+    function updateUserMarker(
+        latitude,
+        longitude
+    ) {
         if (!state.map) {
             return;
         }
@@ -447,27 +671,29 @@
                 L.marker(
                     [latitude, longitude],
                     {
-                        icon: createUserIcon(),
-                        zIndexOffset: 5000
+                        icon:
+                            createUserIcon(),
+                        zIndexOffset:
+                            1000
                     }
                 )
-                .addTo(state.map)
-                .bindTooltip(
-                    "TU POSICIÓN",
-                    {
-                        direction: "top",
-                        offset: [0, -12]
-                    }
-                );
+                    .addTo(state.map)
+                    .bindTooltip(
+                        "TU POSICIÓN",
+                        {
+                            direction:
+                                "top"
+                        }
+                    );
         } else {
-            state.userMarker.setLatLng([
-                latitude,
-                longitude
-            ]);
+            state.userMarker.setLatLng(
+                [latitude, longitude]
+            );
         }
 
         const accuracy =
-            state.lastPosition?.accuracy || 15;
+            state.lastPosition?.accuracy ||
+            10;
 
         if (!state.accuracyCircle) {
             state.accuracyCircle =
@@ -475,166 +701,23 @@
                     [latitude, longitude],
                     {
                         radius: accuracy,
-                        color: "#20d8ff",
+                        color: "#29d8ff",
                         weight: 1,
-                        opacity: .3,
-                        fillColor: "#20d8ff",
-                        fillOpacity: .04,
+                        opacity: .35,
+                        fillColor: "#29d8ff",
+                        fillOpacity: .05,
                         interactive: false
                     }
                 ).addTo(state.map);
         } else {
-            state.accuracyCircle.setLatLng([
-                latitude,
-                longitude
-            ]);
+            state.accuracyCircle.setLatLng(
+                [latitude, longitude]
+            );
 
             state.accuracyCircle.setRadius(
                 accuracy
             );
         }
-    }
-
-    async function loadRadars(latitude, longitude) {
-        if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
-        ) {
-            return;
-        }
-
-        if (state.radarLoading) {
-            return;
-        }
-
-        if (
-            Date.now() - state.lastRadarQuery < 30000
-        ) {
-            return;
-        }
-
-        state.lastRadarQuery = Date.now();
-        state.radarLoading = true;
-
-        showStatus("CARGANDO RADARES...");
-
-        const radius = CONFIG.radar.queryRadius;
-
-        const query = `
-[out:json][timeout:40];
-(
-  node["highway"="speed_camera"](around:${radius},${latitude},${longitude});
-  way["highway"="speed_camera"](around:${radius},${latitude},${longitude});
-  node["enforcement"="maxspeed"](around:${radius},${latitude},${longitude});
-  way["enforcement"="maxspeed"](around:${radius},${latitude},${longitude});
-);
-out center tags;
-`;
-
-        try {
-            const response =
-                await fetch(
-                    CONFIG.services.overpass,
-                    {
-                        method: "POST",
-                        headers: {
-                            "Content-Type":
-                                "application/x-www-form-urlencoded;charset=UTF-8"
-                        },
-                        body:
-                            "data=" +
-                            encodeURIComponent(query)
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `HTTP ${response.status}`
-                );
-            }
-
-            const data = await response.json();
-
-            const normalized =
-                normalizeRadarData(
-                    data?.elements || []
-                );
-
-            state.radars =
-                deduplicateRadars(normalized);
-
-            state.radarCount =
-                state.radars.length;
-
-            renderRadars();
-
-            showStatus(
-                `${state.radarCount} RADARES CARGADOS`
-            );
-        } catch (error) {
-            console.error(error);
-            showStatus("ERROR CARGANDO RADARES");
-        } finally {
-            state.radarLoading = false;
-        }
-    }
-
-    function normalizeRadarData(elements) {
-        const result = [];
-
-        for (const element of elements) {
-            let latitude = null;
-            let longitude = null;
-
-            if (
-                Number.isFinite(Number(element.lat)) &&
-                Number.isFinite(Number(element.lon))
-            ) {
-                latitude = Number(element.lat);
-                longitude = Number(element.lon);
-            } else if (element.center) {
-                latitude = Number(element.center.lat);
-                longitude = Number(element.center.lon);
-            }
-
-            if (
-                !Number.isFinite(latitude) ||
-                !Number.isFinite(longitude)
-            ) {
-                continue;
-            }
-
-            const tags = element.tags || {};
-
-            const limit =
-                parseSpeedLimit(
-                    tags.maxspeed ||
-                    tags.maxspeed_forward ||
-                    tags.maxspeed_backward ||
-                    tags["maxspeed:forward"] ||
-                    tags["maxspeed:backward"]
-                );
-
-            result.push({
-                id: String(
-                    element.id ??
-                    `${latitude}:${longitude}`
-                ),
-                latitude,
-                longitude,
-                limit,
-                direction:
-                    tags.direction ||
-                    tags["camera:direction"] ||
-                    null,
-                name:
-                    tags.name ||
-                    "RADAR DE VELOCIDAD",
-                source: "OpenStreetMap"
-            });
-        }
-
-        return result;
     }
 
     function parseSpeedLimit(value) {
@@ -655,12 +738,84 @@ out center tags;
             : null;
     }
 
-    function deduplicateRadars(radars) {
+    function normalizeRadarData(elements) {
         const result = [];
 
+        for (const element of elements) {
+            let latitude = null;
+            let longitude = null;
+
+            if (
+                Number.isFinite(
+                    Number(element.lat)
+                ) &&
+                Number.isFinite(
+                    Number(element.lon)
+                )
+            ) {
+                latitude =
+                    Number(element.lat);
+
+                longitude =
+                    Number(element.lon);
+            } else if (element.center) {
+                latitude =
+                    Number(element.center.lat);
+
+                longitude =
+                    Number(element.center.lon);
+            }
+
+            if (
+                !Number.isFinite(latitude) ||
+                !Number.isFinite(longitude)
+            ) {
+                continue;
+            }
+
+            const tags =
+                element.tags || {};
+
+            const limit =
+                parseSpeedLimit(
+                    tags.maxspeed ||
+                    tags.maxspeed_forward ||
+                    tags.maxspeed_backward
+                );
+
+            result.push({
+                id:
+                    String(
+                        element.id ??
+                        `${latitude}:${longitude}`
+                    ),
+
+                latitude,
+                longitude,
+                limit,
+
+                direction:
+                    tags.direction ||
+                    null,
+
+                name:
+                    tags.name ||
+                    "RADAR DE VELOCIDAD",
+
+                source:
+                    "OpenStreetMap"
+            });
+        }
+
+        return result;
+    }
+
+    function deduplicateRadars(radars) {
+        const unique = [];
+
         for (const radar of radars) {
-            const duplicate =
-                result.some(
+            const exists =
+                unique.some(
                     item =>
                         distanceMeters(
                             item.latitude,
@@ -670,12 +825,98 @@ out center tags;
                         ) < 20
                 );
 
-            if (!duplicate) {
-                result.push(radar);
+            if (!exists) {
+                unique.push(radar);
             }
         }
 
-        return result;
+        return unique;
+    }
+
+    async function loadRadars(
+        latitude,
+        longitude,
+        force = false
+    ) {
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+        ) {
+            return;
+        }
+
+        const now = Date.now();
+
+        if (
+            !force &&
+            state.lastRadarQuery &&
+            now - state.lastRadarQuery < 30000
+        ) {
+            return;
+        }
+
+        state.lastRadarQuery = now;
+
+        const radius =
+            CONFIG.radar.queryRadius;
+
+        const query = `
+[out:json][timeout:30];
+(
+  node["highway"="speed_camera"](around:${radius},${latitude},${longitude});
+  way["highway"="speed_camera"](around:${radius},${latitude},${longitude});
+  node["enforcement"="speed"](around:${radius},${latitude},${longitude});
+  way["enforcement"="speed"](around:${radius},${latitude},${longitude});
+);
+out center tags;
+`;
+
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.overpass,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded"
+                        },
+                        body:
+                            "data=" +
+                            encodeURIComponent(query)
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Overpass HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            state.radars =
+                deduplicateRadars(
+                    normalizeRadarData(
+                        data?.elements || []
+                    )
+                );
+
+            state.radarCount =
+                state.radars.length;
+
+            renderRadars();
+        } catch (error) {
+            console.error(
+                "[Radar]",
+                error
+            );
+
+            showStatus(
+                "ERROR CARGANDO RADARES"
+            );
+        }
     }
 
     function renderRadars() {
@@ -685,154 +926,56 @@ out center tags;
 
         state.radarLayer.clearLayers();
 
-        for (const radar of state.radars) {
-            const marker =
-                L.marker(
-                    [
-                        radar.latitude,
-                        radar.longitude
-                    ],
-                    {
-                        icon:
-                            createRadarIcon(
-                                radar.limit
-                            )
-                    }
+        state.radars.forEach(
+            radar => {
+                const marker =
+                    L.marker(
+                        [
+                            radar.latitude,
+                            radar.longitude
+                        ],
+                        {
+                            icon:
+                                createRadarIcon(
+                                    radar.limit
+                                )
+                        }
+                    );
+
+                const limitText =
+                    radar.limit
+                        ? `${radar.limit} KM/H`
+                        : "LÍMITE NO DISPONIBLE";
+
+                marker.bindPopup(`
+                    <div style="
+                        font-family:Arial,sans-serif;
+                        min-width:180px;
+                        color:#111;
+                    ">
+                        <strong>RADAR DE VELOCIDAD</strong>
+                        <br>
+                        LÍMITE: ${limitText}
+                        <br>
+                        FUENTE: OPENSTREETMAP
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.radarLayer
                 );
-
-            const limit =
-                radar.limit
-                    ? `${radar.limit} KM/H`
-                    : "LÍMITE NO DISPONIBLE";
-
-            marker.bindPopup(`
-                <div style="
-                    min-width:180px;
-                    font-family:Arial,sans-serif;
-                ">
-                    <strong>RADAR DE VELOCIDAD</strong>
-                    <br>
-                    Límite: ${limit}
-                    <br>
-                    Fuente: OpenStreetMap
-                </div>
-            `);
-
-            marker.addTo(state.radarLayer);
-        }
-    }
-
-    function getRadarBearing(radar) {
-        const value = radar?.direction;
-
-        if (value === null || value === undefined) {
-            return null;
-        }
-
-        const numeric = Number(value);
-
-        if (Number.isFinite(numeric)) {
-            return numeric;
-        }
-
-        const text =
-            normalizeText(value).toLowerCase();
-
-        const directions = {
-            n: 0,
-            norte: 0,
-            ne: 45,
-            noreste: 45,
-            e: 90,
-            este: 90,
-            se: 135,
-            sureste: 135,
-            s: 180,
-            sur: 180,
-            so: 225,
-            suroeste: 225,
-            o: 270,
-            oeste: 270,
-            no: 315,
-            noroeste: 315
-        };
-
-        return directions[text] ?? null;
-    }
-
-    function isRadarAhead(radar, latitude, longitude) {
-        const bearing =
-            getRadarBearing(radar);
-
-        const userHeading =
-            state.simulation.active
-                ? state.simulation.heading
-                : state.heading;
-
-        const distance =
-            distanceMeters(
-                latitude,
-                longitude,
-                radar.latitude,
-                radar.longitude
-            );
-
-        if (
-            distance >
-            CONFIG.radar.warningDistance
-        ) {
-            return false;
-        }
-
-        const directionToRadar =
-            bearingBetween(
-                latitude,
-                longitude,
-                radar.latitude,
-                radar.longitude
-            );
-
-        if (
-            angleDifference(
-                userHeading,
-                directionToRadar
-            ) > 75
-        ) {
-            return false;
-        }
-
-        if (bearing !== null) {
-            if (
-                angleDifference(
-                    userHeading,
-                    bearing
-                ) >
-                CONFIG.radar.directionAngle
-            ) {
-                return false;
             }
-        }
-
-        return true;
+        );
     }
 
-    function findClosestRadarAhead(
+    function findClosestRadar(
         latitude,
-        longitude
+        longitude,
+        heading
     ) {
         let closest = null;
 
         for (const radar of state.radars) {
-            if (
-                !isRadarAhead(
-                    radar,
-                    latitude,
-                    longitude
-                )
-            ) {
-                continue;
-            }
-
             const distance =
                 distanceMeters(
                     latitude,
@@ -842,6 +985,26 @@ out center tags;
                 );
 
             if (
+                distance >
+                CONFIG.radar.warningDistance
+            ) {
+                continue;
+            }
+
+            if (
+                !isAhead(
+                    latitude,
+                    longitude,
+                    radar.latitude,
+                    radar.longitude,
+                    heading,
+                    CONFIG.radar.directionAngle
+                )
+            ) {
+                continue;
+            }
+
+            if (
                 !closest ||
                 distance < closest.distance
             ) {
@@ -855,709 +1018,159 @@ out center tags;
         return closest;
     }
 
-    function normalizeCameraName(value) {
-        let text = String(value || "");
-
-        text =
-            text
-                .replace(/^\s*[*•-]\s*/, "")
-                .replace(/\s+/g, " ")
-                .trim();
-
-        text =
-            text
-                .replace(/\s*\/\s*/g, " / ")
-                .replace(/\s*\(\s*/g, " (")
-                .replace(/\s*\)\s*/g, ")");
-
-        return text;
-    }
-
-    function isCameraLocationText(text) {
-        const value =
-            normalizeText(text).toLowerCase();
-
-        if (!value) {
-            return false;
+    function getDeviceHeading(event) {
+        if (
+            typeof event.webkitCompassHeading ===
+            "number"
+        ) {
+            return normalizeHeading(
+                event.webkitCompassHeading
+            );
         }
 
         if (
-            value.length < 8 ||
-            value.length > 180
+            typeof event.alpha !==
+            "number"
         ) {
-            return false;
+            return null;
         }
 
-        const hasIntersection =
-            value.includes(" y ") ||
-            value.includes(" / ") ||
-            value.includes("tunel") ||
-            value.includes("acceso") ||
-            value.includes("salida");
-
-        const blacklist = [
-            "camaras de monitoreo",
-            "filmaciones",
-            "ultima actualizacion",
-            "publicado",
-            "derecho a la informacion",
-            "formulario",
-            "centro y cordon",
-            "aguada",
-            "parque rodo",
-            "pocitos",
-            "buceo",
-            "tres cruces",
-            "parque batlle",
-            "accesos",
-            "colon y sayago",
-            "paso molino",
-            "jacinto vera",
-            "la blanqueada",
-            "mercado modelo",
-            "flor de maronas",
-            "cerrito",
-            "prado"
-        ];
-
-        if (
-            blacklist.some(
-                item => value === item
-            )
-        ) {
-            return false;
-        }
-
-        return hasIntersection;
-    }
-
-    async function fetchOfficialCameraPage() {
-        let response;
-
-        try {
-            response =
-                await fetch(
-                    CONFIG.cameras.source,
-                    {
-                        method: "GET",
-                        cache: "no-store"
-                    }
-                );
-
-            if (response.ok) {
-                return await response.text();
-            }
-        } catch (_) {}
-
-        try {
-            response =
-                await fetch(
-                    CONFIG.cameras.proxy,
-                    {
-                        method: "GET",
-                        cache: "no-store"
-                    }
-                );
-
-            if (response.ok) {
-                return await response.text();
-            }
-        } catch (_) {}
-
-        throw new Error(
-            "No se pudo obtener la página oficial"
+        return normalizeHeading(
+            360 - event.alpha
         );
     }
 
-    function parseOfficialCameraLocations(html) {
-        const locations = [];
+    function handleDeviceOrientation(event) {
+        const heading =
+            getDeviceHeading(event);
 
-        const parser =
-            new DOMParser();
-
-        const doc =
-            parser.parseFromString(
-                html,
-                "text/html"
-            );
-
-        const candidates = [];
-
-        doc
-            .querySelectorAll(
-                "li, p"
-            )
-            .forEach(
-                element => {
-                    const text =
-                        normalizeCameraName(
-                            element.textContent
-                        );
-
-                    if (
-                        isCameraLocationText(
-                            text
-                        )
-                    ) {
-                        candidates.push(text);
-                    }
-                }
-            );
-
-        const plainText =
-            doc.body?.innerText || "";
-
-        plainText
-            .split(/\n+/)
-            .map(
-                item =>
-                    normalizeCameraName(item)
-            )
-            .filter(
-                item =>
-                    isCameraLocationText(item)
-            )
-            .forEach(
-                item =>
-                    candidates.push(item)
-            );
-
-        for (const location of candidates) {
-            const normalized =
-                normalizeText(
-                    location
-                ).toLowerCase();
-
-            if (
-                locations.some(
-                    item =>
-                        normalizeText(
-                            item
-                        ).toLowerCase() ===
-                        normalized
-                )
-            ) {
-                continue;
-            }
-
-            locations.push(location);
-        }
-
-        return locations;
-    }
-
-    function loadCameraCache() {
-        try {
-            const raw =
-                localStorage.getItem(
-                    CONFIG.cameras.cacheKey
-                );
-
-            if (!raw) {
-                return {};
-            }
-
-            const parsed =
-                JSON.parse(raw);
-
-            return parsed &&
-                typeof parsed === "object"
-                ? parsed
-                : {};
-        } catch (_) {
-            return {};
-        }
-    }
-
-    function saveCameraCache(cache) {
-        try {
-            localStorage.setItem(
-                CONFIG.cameras.cacheKey,
-                JSON.stringify(cache)
-            );
-        } catch (_) {}
-    }
-
-    function cameraCacheKey(location) {
-        return normalizeText(location)
-            .toLowerCase()
-            .replace(/[^a-z0-9áéíóúüñ ]/gi, "")
-            .replace(/\s+/g, " ")
-            .trim();
-    }
-
-    async function geocodeCameraLocation(location) {
-        const query =
-            `${location}, Montevideo, Uruguay`;
-
-        const url =
-            CONFIG.cameras.geocoder +
-            "?format=jsonv2" +
-            "&limit=1" +
-            "&countrycodes=uy" +
-            "&q=" +
-            encodeURIComponent(query);
-
-        const response =
-            await fetch(
-                url,
-                {
-                    headers: {
-                        "Accept":
-                            "application/json"
-                    }
-                }
-            );
-
-        if (!response.ok) {
-            throw new Error(
-                `Geocoder HTTP ${response.status}`
-            );
-        }
-
-        const data =
-            await response.json();
-
-        if (
-            !Array.isArray(data) ||
-            !data.length
-        ) {
-            return null;
-        }
-
-        const latitude =
-            Number(data[0].lat);
-
-        const longitude =
-            Number(data[0].lon);
-
-        if (
-            !Number.isFinite(latitude) ||
-            !Number.isFinite(longitude)
-        ) {
-            return null;
-        }
-
-        if (
-            latitude < -35.2 ||
-            latitude > -34.5 ||
-            longitude < -56.8 ||
-            longitude > -55.5
-        ) {
-            return null;
-        }
-
-        return {
-            latitude,
-            longitude
-        };
-    }
-
-    async function geocodeMissingCameras(
-        locations,
-        cache
-    ) {
-        const result = [];
-
-        for (
-            let index = 0;
-            index < locations.length;
-            index++
-        ) {
-            const location =
-                locations[index];
-
-            const key =
-                cameraCacheKey(location);
-
-            if (cache[key]) {
-                result.push({
-                    id: key,
-                    name: location,
-                    latitude:
-                        cache[key].latitude,
-                    longitude:
-                        cache[key].longitude
-                });
-
-                continue;
-            }
-
-            showStatus(
-                `UBICANDO CÁMARA ${index + 1}/${locations.length}`
-            );
-
-            try {
-                const point =
-                    await geocodeCameraLocation(
-                        location
-                    );
-
-                if (point) {
-                    cache[key] = {
-                        latitude:
-                            point.latitude,
-                        longitude:
-                            point.longitude,
-                        updated:
-                            Date.now()
-                    };
-
-                    result.push({
-                        id: key,
-                        name: location,
-                        latitude:
-                            point.latitude,
-                        longitude:
-                            point.longitude
-                    });
-                }
-            } catch (error) {
-                console.warn(
-                    "Geocoder:",
-                    location,
-                    error
-                );
-            }
-
-            await new Promise(
-                resolve =>
-                    setTimeout(
-                        resolve,
-                        1100
-                    )
-            );
-        }
-
-        saveCameraCache(cache);
-
-        return result;
-    }
-
-    async function loadOfficialCameras() {
-        if (state.cameraLoading) {
+        if (heading === null) {
             return;
         }
 
-        state.cameraLoading = true;
+        state.orientation.heading =
+            heading;
 
-        showStatus(
-            "CARGANDO CÁMARAS OFICIALES..."
-        );
+        state.orientation.active =
+            true;
 
+        if (state.simulation.active) {
+            state.simulation.heading =
+                heading;
+
+            updateOrientationUI();
+            updateSimulationUI();
+        }
+    }
+
+    async function enableDeviceOrientation() {
         try {
-            const html =
-                await fetchOfficialCameraPage();
+            if (
+                typeof DeviceOrientationEvent !==
+                "undefined" &&
+                typeof DeviceOrientationEvent.requestPermission ===
+                "function"
+            ) {
+                const permission =
+                    await DeviceOrientationEvent.requestPermission();
 
-            const locations =
-                parseOfficialCameraLocations(
-                    html
+                if (
+                    permission !==
+                    "granted"
+                ) {
+                    state.orientation.permission =
+                        "denied";
+
+                    showStatus(
+                        "GIROSCOPIO SIN PERMISO"
+                    );
+
+                    return false;
+                }
+            }
+
+            state.orientation.permission =
+                "granted";
+
+            if (
+                !state.orientation.listener
+            ) {
+                state.orientation.listener =
+                    handleDeviceOrientation;
+
+                window.addEventListener(
+                    "deviceorientationabsolute",
+                    state.orientation.listener,
+                    true
                 );
 
-            if (!locations.length) {
-                throw new Error(
-                    "No se encontraron ubicaciones"
+                window.addEventListener(
+                    "deviceorientation",
+                    state.orientation.listener,
+                    true
                 );
             }
 
-            const cache =
-                loadCameraCache();
+            state.orientation.active =
+                true;
 
-            const cameras =
-                await geocodeMissingCameras(
-                    locations,
-                    cache
-                );
+            updateOrientationUI();
 
-            state.cameras =
-                deduplicateCameras(
-                    cameras
-                );
-
-            state.cameraCount =
-                state.cameras.length;
-
-            renderCameras();
-
-            showStatus(
-                `${state.cameraCount} CÁMARAS OFICIALES`
-            );
+            return true;
         } catch (error) {
             console.error(
-                "[Cameras]",
+                "[Orientation]",
                 error
             );
 
+            state.orientation.permission =
+                "error";
+
             showStatus(
-                "ERROR CARGANDO CÁMARAS OFICIALES"
+                "ERROR DE GIROSCOPIO"
             );
-        } finally {
-            state.cameraLoading = false;
+
+            return false;
         }
     }
 
-    function deduplicateCameras(cameras) {
-        const result = [];
+    function updateOrientationUI() {
+        const heading =
+            state.orientation.heading;
 
-        for (const camera of cameras) {
-            const duplicate =
-                result.some(
-                    item =>
-                        distanceMeters(
-                            item.latitude,
-                            item.longitude,
-                            camera.latitude,
-                            camera.longitude
-                        ) < 25
-                );
-
-            if (!duplicate) {
-                result.push(camera);
-            }
-        }
-
-        return result;
-    }
-
-    function renderCameras() {
-        if (!state.cameraLayer) {
+        if (heading === null) {
             return;
         }
 
-        state.cameraLayer.clearLayers();
-
-        for (const camera of state.cameras) {
-            const marker =
-                L.marker(
-                    [
-                        camera.latitude,
-                        camera.longitude
-                    ],
-                    {
-                        icon:
-                            createCameraIcon(),
-                        zIndexOffset: 2000
-                    }
-                );
-
-            marker.bindPopup(`
-                <div style="
-                    min-width:190px;
-                    font-family:Arial,sans-serif;
-                ">
-                    <strong>CÁMARA DE TRÁNSITO</strong>
-                    <br>
-                    ${escapeHtml(camera.name)}
-                    <br><br>
-                    <span style="color:#ff8a00;font-weight:700">
-                        FUENTE: INTENDENCIA DE MONTEVIDEO
-                    </span>
-                </div>
-            `);
-
-            marker.addTo(
-                state.cameraLayer
-            );
-        }
-    }
-
-    function escapeHtml(value) {
-        return String(value || "")
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;")
-            .replace(/"/g, "&quot;")
-            .replace(/'/g, "&#039;");
-    }
-
-    function findClosestCamera(
-        latitude,
-        longitude
-    ) {
-        let closest = null;
-
-        for (const camera of state.cameras) {
-            const distance =
-                distanceMeters(
-                    latitude,
-                    longitude,
-                    camera.latitude,
-                    camera.longitude
-                );
-
-            if (
-                !closest ||
-                distance < closest.distance
-            ) {
-                closest = {
-                    camera,
-                    distance
-                };
-            }
-        }
-
-        return closest;
-    }
-
-    function checkNearbyAlerts(
-        latitude,
-        longitude
-    ) {
-        const radar =
-            findClosestRadarAhead(
-                latitude,
-                longitude
-            );
-
-        if (
-            radar &&
-            state.settings.radarAlert
-        ) {
-            showRadarWarning(
-                radar.radar,
-                radar.distance
-            );
-        } else {
-            hideRadarWarning();
-        }
-
-        const camera =
-            findClosestCamera(
-                latitude,
-                longitude
-            );
-
-        if (
-            camera &&
-            camera.distance <=
-            CONFIG.radar.warningDistance &&
-            state.settings.cameraAlert
-        ) {
-            showCameraWarning(
-                camera.camera,
-                camera.distance
-            );
-        } else {
-            hideCameraWarning();
-        }
-    }
-
-    function showRadarWarning(
-        radar,
-        distance
-    ) {
-        const warning =
-            byId("radarWarning");
-
-        if (!warning) {
-            return;
-        }
-
-        const distanceEl =
-            byId("radarWarningDistance");
-
-        const limitEl =
-            byId("radarWarningLimit");
-
-        const rounded =
-            Math.max(
-                1,
-                Math.round(distance)
-            );
-
-        if (distanceEl) {
-            distanceEl.textContent =
-                `${rounded} M`;
-        }
-
-        if (limitEl) {
-            limitEl.textContent =
-                radar.limit
-                    ? `LÍMITE ${radar.limit} KM/H`
-                    : "RADAR";
-        }
-
-        warning.classList.add("active");
-
-        speakAlert(
-            radar.limit
-                ? `Radar a ${rounded} metros. Límite ${radar.limit} kilómetros por hora.`
-                : `Radar a ${rounded} metros.`
+        setText(
+            "headingValue",
+            `${Math.round(heading)}°`
         );
     }
 
-    function showCameraWarning(
-        camera,
-        distance
+    function speakOnce(
+        type,
+        id,
+        text
     ) {
-        const warning =
-            byId("cameraWarning");
-
-        if (!warning) {
+        if (!state.speechEnabled) {
             return;
         }
 
-        const distanceEl =
-            byId("cameraWarningDistance");
-
-        if (distanceEl) {
-            distanceEl.textContent =
-                `${Math.max(1, Math.round(distance))} M`;
-        }
-
-        warning.classList.add("active");
-
-        speakAlert(
-            `Cámara de tránsito a ${Math.max(
-                1,
-                Math.round(distance)
-            )} metros.`
-        );
-    }
-
-    function hideRadarWarning() {
-        const warning =
-            byId("radarWarning");
-
-        if (warning) {
-            warning.classList.remove("active");
-        }
-
-        state.warningRadar = null;
-    }
-
-    function hideCameraWarning() {
-        const warning =
-            byId("cameraWarning");
-
-        if (warning) {
-            warning.classList.remove("active");
-        }
-
-        state.warningCamera = null;
-    }
-
-    function speakAlert(text) {
-        if (!state.settings.voice) {
+        if (
+            state.announced[type] ===
+            id
+        ) {
             return;
         }
+
+        state.announced[type] = id;
 
         if (
             !("speechSynthesis" in window)
         ) {
             return;
         }
-
-        const now = Date.now();
-
-        if (
-            now - state.lastSpeech <
-            10000
-        ) {
-            return;
-        }
-
-        state.lastSpeech = now;
 
         try {
             window.speechSynthesis.cancel();
@@ -1574,136 +1187,750 @@ out center tags;
             window.speechSynthesis.speak(
                 utterance
             );
-        } catch (_) {}
-    }
-
-    async function requestOrientationPermission() {
-        try {
-            if (
-                typeof DeviceOrientationEvent !==
-                "undefined" &&
-                typeof DeviceOrientationEvent.requestPermission ===
-                "function"
-            ) {
-                const result =
-                    await DeviceOrientationEvent
-                        .requestPermission();
-
-                state.orientationPermission =
-                    result === "granted";
-
-                if (
-                    state.orientationPermission
-                ) {
-                    startOrientation();
-                }
-
-                return state.orientationPermission;
-            }
-
-            startOrientation();
-
-            state.orientationPermission = true;
-
-            return true;
         } catch (error) {
             console.warn(
-                "Orientation:",
+                "[Speech]",
                 error
             );
-
-            return false;
         }
     }
 
-    function startOrientation() {
-        if (state.orientationReady) {
+    function showRadarWarning(
+        radar,
+        distance
+    ) {
+        const warning =
+            byId("radarWarning");
+
+        if (!warning) {
             return;
         }
 
-        window.addEventListener(
-            "deviceorientationabsolute",
-            handleOrientation,
-            true
-        );
+        const distanceElement =
+            byId("radarWarningDistance");
 
-        window.addEventListener(
-            "deviceorientation",
-            handleOrientation,
-            true
-        );
+        const limitElement =
+            byId("radarWarningLimit");
 
-        state.orientationReady = true;
+        const rounded =
+            Math.max(
+                1,
+                Math.round(distance)
+            );
 
-        showStatus(
-            "GIROSCOPIO ACTIVO"
-        );
-    }
-
-    function handleOrientation(event) {
-        if (!event) {
-            return;
+        if (distanceElement) {
+            distanceElement.textContent =
+                `${rounded} M`;
         }
 
-        let heading = null;
+        if (limitElement) {
+            limitElement.textContent =
+                radar.limit
+                    ? `LÍMITE ${radar.limit} KM/H`
+                    : "RADAR";
+        }
+
+        warning.classList.add(
+            "active"
+        );
 
         if (
-            Number.isFinite(
-                Number(event.webkitCompassHeading)
-            )
+            state.radarAlertEnabled
         ) {
-            heading =
-                Number(
-                    event.webkitCompassHeading
+            speakOnce(
+                "radar",
+                String(radar.id),
+                radar.limit
+                    ? `Radar a ${rounded} metros. Límite ${radar.limit} kilómetros por hora.`
+                    : `Radar a ${rounded} metros.`
+            );
+        }
+    }
+
+    function showCameraWarning(
+        camera,
+        distance
+    ) {
+        const warning =
+            byId("cameraWarning");
+
+        if (!warning) {
+            return;
+        }
+
+        const distanceElement =
+            byId("cameraWarningDistance");
+
+        const rounded =
+            Math.max(
+                1,
+                Math.round(distance)
+            );
+
+        if (distanceElement) {
+            distanceElement.textContent =
+                `${rounded} M`;
+        }
+
+        warning.classList.add(
+            "active"
+        );
+
+        if (
+            state.cameraAlertEnabled
+        ) {
+            speakOnce(
+                "camera",
+                String(camera.id),
+                `Cámara de tránsito a ${rounded} metros.`
+            );
+        }
+    }
+
+    function showDeadEndWarning(
+        deadEnd,
+        distance
+    ) {
+        const warning =
+            byId("deadEndWarning");
+
+        if (!warning) {
+            return;
+        }
+
+        const distanceElement =
+            byId("deadEndWarningDistance");
+
+        const rounded =
+            Math.max(
+                1,
+                Math.round(distance)
+            );
+
+        if (distanceElement) {
+            distanceElement.textContent =
+                `${rounded} M`;
+        }
+
+        warning.classList.add(
+            "active"
+        );
+
+        if (
+            state.deadEndAlertEnabled
+        ) {
+            speakOnce(
+                "deadEnd",
+                String(deadEnd.id),
+                `Atención. Calle sin salida en ${rounded} metros.`
+            );
+        }
+    }
+
+    function hideRadarWarning() {
+        const warning =
+            byId("radarWarning");
+
+        if (warning) {
+            warning.classList.remove(
+                "active"
+            );
+        }
+
+        state.warningRadar = null;
+    }
+
+    function hideCameraWarning() {
+        const warning =
+            byId("cameraWarning");
+
+        if (warning) {
+            warning.classList.remove(
+                "active"
+            );
+        }
+
+        state.warningCamera = null;
+    }
+
+    function hideDeadEndWarning() {
+        const warning =
+            byId("deadEndWarning");
+
+        if (warning) {
+            warning.classList.remove(
+                "active"
+            );
+        }
+
+        state.warningDeadEnd = null;
+    }
+
+    function findClosestCamera(
+        latitude,
+        longitude,
+        heading
+    ) {
+        let closest = null;
+
+        for (const camera of state.cameras) {
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    camera.latitude,
+                    camera.longitude
                 );
-        } else if (
-            Number.isFinite(
-                Number(event.alpha)
-            )
-        ) {
-            heading =
-                360 -
-                Number(event.alpha);
 
             if (
-                Number.isFinite(
-                    Number(event.beta)
-                ) &&
-                Number(event.beta) < -45
+                distance >
+                CONFIG.camera.warningDistance
             ) {
-                heading =
-                    (heading + 180) % 360;
+                continue;
+            }
+
+            if (
+                !isAhead(
+                    latitude,
+                    longitude,
+                    camera.latitude,
+                    camera.longitude,
+                    heading,
+                    CONFIG.camera.directionAngle
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                !closest ||
+                distance < closest.distance
+            ) {
+                closest = {
+                    camera,
+                    distance
+                };
             }
         }
 
+        return closest;
+    }
+
+    function findClosestDeadEnd(
+        latitude,
+        longitude,
+        heading
+    ) {
+        let closest = null;
+
+        for (const deadEnd of state.deadEnds) {
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    deadEnd.latitude,
+                    deadEnd.longitude
+                );
+
+            if (
+                distance >
+                CONFIG.deadEnd.warningDistance
+            ) {
+                continue;
+            }
+
+            if (
+                !isAhead(
+                    latitude,
+                    longitude,
+                    deadEnd.latitude,
+                    deadEnd.longitude,
+                    heading,
+                    CONFIG.deadEnd.directionAngle
+                )
+            ) {
+                continue;
+            }
+
+            if (
+                !closest ||
+                distance < closest.distance
+            ) {
+                closest = {
+                    deadEnd,
+                    distance
+                };
+            }
+        }
+
+        return closest;
+    }
+
+    function checkAllAlerts(
+        latitude,
+        longitude,
+        heading
+    ) {
+        const radar =
+            findClosestRadar(
+                latitude,
+                longitude,
+                heading
+            );
+
+        if (radar) {
+            state.warningRadar =
+                radar.radar;
+
+            showRadarWarning(
+                radar.radar,
+                radar.distance
+            );
+        } else {
+            hideRadarWarning();
+
+            state.announced.radar =
+                null;
+        }
+
+        const camera =
+            findClosestCamera(
+                latitude,
+                longitude,
+                heading
+            );
+
+        if (camera) {
+            state.warningCamera =
+                camera.camera;
+
+            showCameraWarning(
+                camera.camera,
+                camera.distance
+            );
+        } else {
+            hideCameraWarning();
+
+            state.announced.camera =
+                null;
+        }
+
+        const deadEnd =
+            findClosestDeadEnd(
+                latitude,
+                longitude,
+                heading
+            );
+
+        if (deadEnd) {
+            state.warningDeadEnd =
+                deadEnd.deadEnd;
+
+            showDeadEndWarning(
+                deadEnd.deadEnd,
+                deadEnd.distance
+            );
+        } else {
+            hideDeadEndWarning();
+
+            state.announced.deadEnd =
+                null;
+        }
+    }
+
+    function normalizeCameraData(items) {
+        const result = [];
+
+        for (
+            const item of items
+        ) {
+            if (
+                !item ||
+                !Number.isFinite(
+                    Number(item.latitude)
+                ) ||
+                !Number.isFinite(
+                    Number(item.longitude)
+                )
+            ) {
+                continue;
+            }
+
+            result.push({
+                id:
+                    String(
+                        item.id ??
+                        `${item.latitude}:${item.longitude}`
+                    ),
+
+                latitude:
+                    Number(item.latitude),
+
+                longitude:
+                    Number(item.longitude),
+
+                name:
+                    item.name ||
+                    "CÁMARA DE TRÁNSITO",
+
+                source:
+                    "Intendencia de Montevideo"
+            });
+        }
+
+        return result;
+    }
+
+    function extractCoordinatesFromText(
+        text
+    ) {
+        const results = [];
+        const regex =
+            /(-?\d{1,3}\.\d+)\s*[,;]\s*(-?\d{1,3}\.\d+)/g;
+
+        let match;
+
+        while (
+            (match = regex.exec(text))
+        ) {
+            const latitude =
+                Number(match[1]);
+
+            const longitude =
+                Number(match[2]);
+
+            if (
+                latitude >= -35.2 &&
+                latitude <= -34.5 &&
+                longitude >= -56.7 &&
+                longitude <= -55.7
+            ) {
+                results.push({
+                    latitude,
+                    longitude
+                });
+            }
+        }
+
+        return results;
+    }
+
+    async function loadOfficialCameras(
+        force = false
+    ) {
+        const now = Date.now();
+
         if (
-            !Number.isFinite(heading)
+            !force &&
+            state.lastCameraQuery &&
+            now - state.lastCameraQuery <
+                60000
         ) {
             return;
         }
 
-        heading =
-            (heading + 360) % 360;
+        state.lastCameraQuery = now;
 
-        state.heading = heading;
-        state.headingSource = "gyro";
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.cameraPage,
+                    {
+                        method: "GET",
+                        cache: "no-store"
+                    }
+                );
 
-        updateHeadingUI(heading);
+            if (!response.ok) {
+                throw new Error(
+                    `HTTP ${response.status}`
+                );
+            }
+
+            const html =
+                await response.text();
+
+            const parser =
+                new DOMParser();
+
+            const document =
+                parser.parseFromString(
+                    html,
+                    "text/html"
+                );
+
+            const text =
+                document.body?.innerText ||
+                "";
+
+            const coordinates =
+                extractCoordinatesFromText(
+                    text
+                );
+
+            if (
+                coordinates.length
+            ) {
+                state.cameras =
+                    normalizeCameraData(
+                        coordinates.map(
+                            (item, index) => ({
+                                ...item,
+                                id:
+                                    `imm-${index + 1}`
+                            })
+                        )
+                    );
+
+                state.cameraCount =
+                    state.cameras.length;
+
+                renderCameras();
+            }
+        } catch (error) {
+            console.warn(
+                "[Cameras]",
+                error
+            );
+        }
     }
 
-    function updateHeadingUI(heading) {
-        const indicator =
-            byId("headingIndicator");
-
-        if (!indicator) {
+    function renderCameras() {
+        if (!state.cameraLayer) {
             return;
         }
 
-        indicator.style.transform =
-            `rotate(${heading}deg)`;
+        state.cameraLayer.clearLayers();
+
+        state.cameras.forEach(
+            camera => {
+                const marker =
+                    L.marker(
+                        [
+                            camera.latitude,
+                            camera.longitude
+                        ],
+                        {
+                            icon:
+                                createCameraIcon()
+                        }
+                    );
+
+                marker.bindPopup(`
+                    <div style="
+                        font-family:Arial,sans-serif;
+                        min-width:180px;
+                        color:#111;
+                    ">
+                        <strong>CÁMARA DE TRÁNSITO</strong>
+                        <br>
+                        FUENTE: INTENDENCIA DE MONTEVIDEO
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.cameraLayer
+                );
+            }
+        );
     }
 
-    function startSimulation() {
+    async function loadDeadEnds(
+        latitude,
+        longitude,
+        force = false
+    ) {
+        const now = Date.now();
+
+        if (
+            !force &&
+            state.lastDeadEndQuery &&
+            now - state.lastDeadEndQuery <
+                60000
+        ) {
+            return;
+        }
+
+        state.lastDeadEndQuery = now;
+
+        const radius = 50000;
+
+        const query = `
+[out:json][timeout:30];
+(
+  node["noexit"="yes"](around:${radius},${latitude},${longitude});
+  way["noexit"="yes"](around:${radius},${latitude},${longitude});
+);
+out center tags;
+`;
+
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.overpass,
+                    {
+                        method: "POST",
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded"
+                        },
+                        body:
+                            "data=" +
+                            encodeURIComponent(query)
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Overpass HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            const result = [];
+
+            for (
+                const element of
+                data?.elements || []
+            ) {
+                let latitude = null;
+                let longitude = null;
+
+                if (
+                    Number.isFinite(
+                        Number(element.lat)
+                    ) &&
+                    Number.isFinite(
+                        Number(element.lon)
+                    )
+                ) {
+                    latitude =
+                        Number(element.lat);
+
+                    longitude =
+                        Number(element.lon);
+                } else if (
+                    element.center
+                ) {
+                    latitude =
+                        Number(
+                            element.center.lat
+                        );
+
+                    longitude =
+                        Number(
+                            element.center.lon
+                        );
+                }
+
+                if (
+                    !Number.isFinite(latitude) ||
+                    !Number.isFinite(longitude)
+                ) {
+                    continue;
+                }
+
+                result.push({
+                    id:
+                        `dead-${element.type}-${element.id}`,
+
+                    latitude,
+                    longitude,
+
+                    name:
+                        element.tags?.name ||
+                        "CALLE SIN SALIDA"
+                });
+            }
+
+            state.deadEnds =
+                deduplicateDeadEnds(
+                    result
+                );
+
+            state.deadEndCount =
+                state.deadEnds.length;
+
+            renderDeadEnds();
+        } catch (error) {
+            console.warn(
+                "[DeadEnd]",
+                error
+            );
+        }
+    }
+
+    function deduplicateDeadEnds(
+        items
+    ) {
+        const result = [];
+
+        for (
+            const item of items
+        ) {
+            const exists =
+                result.some(
+                    existing =>
+                        distanceMeters(
+                            existing.latitude,
+                            existing.longitude,
+                            item.latitude,
+                            item.longitude
+                        ) < 30
+                );
+
+            if (!exists) {
+                result.push(item);
+            }
+        }
+
+        return result;
+    }
+
+    function renderDeadEnds() {
+        if (!state.deadEndLayer) {
+            return;
+        }
+
+        state.deadEndLayer.clearLayers();
+
+        state.deadEnds.forEach(
+            deadEnd => {
+                const marker =
+                    L.marker(
+                        [
+                            deadEnd.latitude,
+                            deadEnd.longitude
+                        ],
+                        {
+                            icon:
+                                createDeadEndIcon()
+                        }
+                    );
+
+                marker.bindPopup(`
+                    <div style="
+                        font-family:Arial,sans-serif;
+                        color:#111;
+                    ">
+                        <strong>CALLE SIN SALIDA</strong>
+                        <br>
+                        ${deadEnd.name}
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.deadEndLayer
+                );
+            }
+        );
+    }
+
+    async function startSimulation() {
+        await enableDeviceOrientation();
+
         let latitude =
             state.lastPosition?.latitude;
 
@@ -1715,68 +1942,143 @@ out center tags;
             !Number.isFinite(longitude)
         ) {
             const center =
-                state.map.getCenter();
+                state.map
+                    ? state.map.getCenter()
+                    : {
+                        lat:
+                            CONFIG.map.defaultCenter[0],
 
-            latitude = center.lat;
-            longitude = center.lng;
+                        lng:
+                            CONFIG.map.defaultCenter[1]
+                    };
+
+            latitude =
+                center.lat;
+
+            longitude =
+                center.lng;
         }
 
-        state.simulation.active = true;
-        state.simulation.latitude = latitude;
-        state.simulation.longitude = longitude;
+        const heading =
+            state.orientation.heading ??
+            state.lastPosition?.heading ??
+            0;
+
+        state.simulation.active =
+            true;
+
+        state.simulation.latitude =
+            latitude;
+
+        state.simulation.longitude =
+            longitude;
+
         state.simulation.heading =
-            Number(state.heading) || 0;
+            heading;
+
         state.simulation.speed =
             CONFIG.simulation.defaultSpeed;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.camera =
+            null;
+
+        state.simulation.deadEnd =
+            null;
+
+        state.simulation.distance =
+            null;
+
+        state.announced.radar =
+            null;
+
+        state.announced.camera =
+            null;
+
+        state.announced.deadEnd =
+            null;
 
         updateUserMarker(
             latitude,
             longitude
         );
 
-        state.map.setView(
-            [
-                latitude,
-                longitude
-            ],
-            16,
-            {
-                animate: true
-            }
-        );
+        if (state.map) {
+            state.map.setView(
+                [
+                    latitude,
+                    longitude
+                ],
+                CONFIG.map.userZoom,
+                {
+                    animate: true
+                }
+            );
+        }
 
         showStatus(
-            "MODO PRUEBA ACTIVO"
+            `MODO PRUEBA · ${Math.round(heading)}°`
         );
 
         updateSimulationUI();
+
+        return true;
     }
 
     function stopSimulation() {
-        state.simulation.active = false;
+        state.simulation.active =
+            false;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.camera =
+            null;
+
+        state.simulation.deadEnd =
+            null;
+
+        state.simulation.distance =
+            null;
+
         hideRadarWarning();
         hideCameraWarning();
+        hideDeadEndWarning();
 
         showStatus(
             state.locationActive
                 ? "GPS ACTIVO"
                 : "GPS OFF"
         );
+
+        return true;
     }
 
     function simulationStep() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
         const simulation =
             state.simulation;
 
+        const heading =
+            state.orientation.heading ??
+            simulation.heading ??
+            0;
+
+        simulation.heading =
+            heading;
+
         const next =
             destinationPoint(
                 simulation.latitude,
                 simulation.longitude,
-                simulation.heading,
+                heading,
                 CONFIG.simulation.stepMeters
             );
 
@@ -1790,64 +2092,143 @@ out center tags;
     }
 
     function updateSimulationPosition() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
+        const simulation =
+            state.simulation;
+
         updateUserMarker(
-            state.simulation.latitude,
-            state.simulation.longitude
+            simulation.latitude,
+            simulation.longitude
         );
 
-        checkNearbyAlerts(
-            state.simulation.latitude,
-            state.simulation.longitude
+        checkAllAlerts(
+            simulation.latitude,
+            simulation.longitude,
+            simulation.heading
         );
 
         updateSimulationUI();
 
-        state.map.panTo(
-            [
-                state.simulation.latitude,
-                state.simulation.longitude
-            ],
-            {
-                animate: true,
-                duration: .2
-            }
-        );
+        if (state.map) {
+            state.map.panTo(
+                [
+                    simulation.latitude,
+                    simulation.longitude
+                ],
+                {
+                    animate: true,
+                    duration: .2
+                }
+            );
+        }
     }
 
     function updateSimulationUI() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
-        const result =
-            findClosestRadarAhead(
+        const heading =
+            state.orientation.heading ??
+            state.simulation.heading ??
+            0;
+
+        state.simulation.heading =
+            heading;
+
+        updateOrientationUI();
+
+        const radar =
+            findClosestRadar(
                 state.simulation.latitude,
-                state.simulation.longitude
+                state.simulation.longitude,
+                heading
+            );
+
+        const camera =
+            findClosestCamera(
+                state.simulation.latitude,
+                state.simulation.longitude,
+                heading
+            );
+
+        const deadEnd =
+            findClosestDeadEnd(
+                state.simulation.latitude,
+                state.simulation.longitude,
+                heading
             );
 
         state.simulation.radar =
-            result?.radar || null;
+            radar?.radar || null;
+
+        state.simulation.camera =
+            camera?.camera || null;
+
+        state.simulation.deadEnd =
+            deadEnd?.deadEnd || null;
 
         state.simulation.distance =
-            result?.distance ?? null;
+            radar?.distance ??
+            camera?.distance ??
+            deadEnd?.distance ??
+            null;
+
+        if (radar) {
+            showRadarWarning(
+                radar.radar,
+                radar.distance
+            );
+        }
+
+        if (camera) {
+            showCameraWarning(
+                camera.camera,
+                camera.distance
+            );
+        }
+
+        if (deadEnd) {
+            showDeadEndWarning(
+                deadEnd.deadEnd,
+                deadEnd.distance
+            );
+        }
     }
 
     function resetSimulation() {
-        if (!state.simulation.active) {
+        if (
+            !state.simulation.active
+        ) {
             return;
         }
 
-        const latitude =
-            state.lastPosition?.latitude ??
-            state.map.getCenter().lat;
+        let latitude =
+            state.lastPosition?.latitude;
 
-        const longitude =
-            state.lastPosition?.longitude ??
-            state.map.getCenter().lng;
+        let longitude =
+            state.lastPosition?.longitude;
+
+        if (
+            !Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)
+        ) {
+            const center =
+                state.map.getCenter();
+
+            latitude =
+                center.lat;
+
+            longitude =
+                center.lng;
+        }
 
         state.simulation.latitude =
             latitude;
@@ -1856,10 +2237,34 @@ out center tags;
             longitude;
 
         state.simulation.heading =
-            state.heading;
+            state.orientation.heading ??
+            state.lastPosition?.heading ??
+            0;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.camera =
+            null;
+
+        state.simulation.deadEnd =
+            null;
+
+        state.simulation.distance =
+            null;
+
+        state.announced.radar =
+            null;
+
+        state.announced.camera =
+            null;
+
+        state.announced.deadEnd =
+            null;
 
         hideRadarWarning();
         hideCameraWarning();
+        hideDeadEndWarning();
 
         updateUserMarker(
             latitude,
@@ -1871,10 +2276,14 @@ out center tags;
                 latitude,
                 longitude
             ],
-            16,
+            CONFIG.map.userZoom,
             {
                 animate: true
             }
+        );
+
+        showStatus(
+            "MODO PRUEBA REINICIADO"
         );
     }
 
@@ -1891,6 +2300,12 @@ out center tags;
             );
         }
 
+        if (state.deadEndRefreshTimer) {
+            clearInterval(
+                state.deadEndRefreshTimer
+            );
+        }
+
         state.radarRefreshTimer =
             setInterval(
                 () => {
@@ -1899,17 +2314,21 @@ out center tags;
                             ? {
                                 latitude:
                                     state.simulation.latitude,
+
                                 longitude:
                                     state.simulation.longitude
                             }
                             : state.lastPosition;
 
-                    if (position) {
-                        loadRadars(
-                            position.latitude,
-                            position.longitude
-                        );
+                    if (!position) {
+                        return;
                     }
+
+                    loadRadars(
+                        position.latitude,
+                        position.longitude,
+                        true
+                    );
                 },
                 CONFIG.radar.refreshInterval
             );
@@ -1917,85 +2336,74 @@ out center tags;
         state.cameraRefreshTimer =
             setInterval(
                 () => {
-                    loadOfficialCameras();
-                },
-                CONFIG.cameras.refreshInterval
-            );
-    }
-
-    function setSetting(
-        name,
-        value
-    ) {
-        if (
-            !Object.prototype.hasOwnProperty.call(
-                state.settings,
-                name
-            )
-        ) {
-            return;
-        }
-
-        state.settings[name] =
-            Boolean(value);
-
-        try {
-            localStorage.setItem(
-                `traffic_${name}`,
-                state.settings[name]
-                    ? "1"
-                    : "0"
-            );
-        } catch (_) {}
-    }
-
-    function loadSettings() {
-        for (
-            const name of
-            Object.keys(state.settings)
-        ) {
-            try {
-                const value =
-                    localStorage.getItem(
-                        `traffic_${name}`
+                    loadOfficialCameras(
+                        true
                     );
+                },
+                CONFIG.camera.refreshInterval
+            );
 
-                if (
-                    value === "0" ||
-                    value === "1"
-                ) {
-                    state.settings[name] =
-                        value === "1";
-                }
-            } catch (_) {}
-        }
+        state.deadEndRefreshTimer =
+            setInterval(
+                () => {
+                    const position =
+                        state.simulation.active
+                            ? {
+                                latitude:
+                                    state.simulation.latitude,
+
+                                longitude:
+                                    state.simulation.longitude
+                            }
+                            : state.lastPosition;
+
+                    if (!position) {
+                        return;
+                    }
+
+                    loadDeadEnds(
+                        position.latitude,
+                        position.longitude,
+                        true
+                    );
+                },
+                CONFIG.deadEnd.refreshInterval
+            );
     }
 
-    async function initialize() {
+    function initialize() {
         if (state.initialized) {
             return;
         }
 
-        state.initialized = true;
-
-        loadSettings();
+        state.initialized =
+            true;
 
         if (!initializeMap()) {
             return;
         }
 
         showStatus(
-            "INICIANDO RADAR..."
+            "RADAR ONLINE · OBTENIENDO GPS"
         );
 
         requestLocation();
 
         loadRadars(
-            CONFIG.map.center[0],
-            CONFIG.map.center[1]
+            CONFIG.map.defaultCenter[0],
+            CONFIG.map.defaultCenter[1],
+            true
         );
 
-        loadOfficialCameras();
+        loadOfficialCameras(
+            true
+        );
+
+        loadDeadEnds(
+            CONFIG.map.defaultCenter[0],
+            CONFIG.map.defaultCenter[1],
+            true
+        );
 
         startRefreshTimers();
 
@@ -2019,14 +2427,6 @@ out center tags;
             return state.map;
         },
 
-        get radars() {
-            return state.radars;
-        },
-
-        get cameras() {
-            return state.cameras;
-        },
-
         get radarCount() {
             return state.radarCount;
         },
@@ -2035,37 +2435,95 @@ out center tags;
             return state.cameraCount;
         },
 
+        get deadEndCount() {
+            return state.deadEndCount;
+        },
+
+        get radars() {
+            return state.radars;
+        },
+
+        get cameras() {
+            return state.cameras;
+        },
+
+        get deadEnds() {
+            return state.deadEnds;
+        },
+
         get simulation() {
             return state.simulation;
         },
 
-        get settings() {
-            return state.settings;
-        },
-
-        get heading() {
-            return state.heading;
+        get orientation() {
+            return state.orientation;
         },
 
         requestLocation,
-
-        requestOrientationPermission,
-
-        startOrientation,
-
+        enableDeviceOrientation,
         startSimulation,
-
         stopSimulation,
-
         simulationStep,
-
         resetSimulation,
+        updateUserMarker,
+        distanceMeters,
+        destinationPoint,
+        checkAllAlerts,
+        updateSimulationUI,
+        showStatus,
 
-        setSetting,
+        setSpeechEnabled(value) {
+            state.speechEnabled =
+                Boolean(value);
 
-        loadOfficialCameras,
+            if (
+                !state.speechEnabled &&
+                "speechSynthesis" in window
+            ) {
+                window.speechSynthesis.cancel();
+            }
+        },
 
-        loadRadars,
+        setRadarAlertEnabled(value) {
+            state.radarAlertEnabled =
+                Boolean(value);
+        },
+
+        setCameraAlertEnabled(value) {
+            state.cameraAlertEnabled =
+                Boolean(value);
+        },
+
+        setDeadEndAlertEnabled(value) {
+            state.deadEndAlertEnabled =
+                Boolean(value);
+        },
+
+        reloadCameras() {
+            return loadOfficialCameras(true);
+        },
+
+        reloadRadars() {
+            const position =
+                state.simulation.active
+                    ? {
+                        latitude:
+                            state.simulation.latitude,
+                        longitude:
+                            state.simulation.longitude
+                    }
+                    : state.lastPosition;
+
+            return loadRadars(
+                position?.latitude ??
+                    CONFIG.map.defaultCenter[0],
+
+                position?.longitude ??
+                    CONFIG.map.defaultCenter[1],
+
+                true
+            );
+        },
 
         invalidateSize() {
             state.map?.invalidateSize();
@@ -2079,7 +2537,9 @@ out center tags;
         document.addEventListener(
             "DOMContentLoaded",
             initialize,
-            { once: true }
+            {
+                once: true
+            }
         );
     } else {
         initialize();
