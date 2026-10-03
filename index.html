@@ -3,8 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
     <title>Radar</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+
+    <link
+        rel="stylesheet"
+        href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    >
+
     <style>
         * {
             box-sizing: border-box;
@@ -34,25 +40,45 @@
             top: max(12px, env(safe-area-inset-top));
             left: 50%;
             transform: translateX(-50%);
+
             z-index: 1000;
+
             display: flex;
             align-items: center;
             gap: 8px;
+
+            max-width: calc(100vw - 16px);
+            overflow-x: auto;
+
             padding: 8px;
+
             border-radius: 12px;
+
             background: rgba(10, 15, 18, .92);
-            box-shadow: 0 4px 20px rgba(0, 0, 0, .35);
+
+            box-shadow:
+                0 4px 20px rgba(0, 0, 0, .35);
+
+            -webkit-overflow-scrolling: touch;
         }
 
         #controls button {
+            flex: 0 0 auto;
+
             border: 0;
             border-radius: 8px;
+
             padding: 10px 14px;
+
             color: #fff;
             background: #222c30;
+
             font-size: 13px;
             font-weight: 700;
+
             cursor: pointer;
+
+            touch-action: manipulation;
         }
 
         #controls button:hover {
@@ -63,35 +89,62 @@
             background: #168b97;
         }
 
+        #controls button:disabled {
+            opacity: .45;
+        }
+
         #status {
             position: fixed;
+
             left: 12px;
             bottom: max(12px, env(safe-area-inset-bottom));
+
             z-index: 1000;
+
             padding: 8px 12px;
+
             border-radius: 8px;
+
             color: #fff;
             background: rgba(10, 15, 18, .88);
+
             font-size: 12px;
             font-weight: 700;
+
             pointer-events: none;
         }
 
         #radarWarning {
             position: fixed;
+
             left: 50%;
-            bottom: max(60px, calc(env(safe-area-inset-bottom) + 60px));
+            bottom: max(
+                60px,
+                calc(env(safe-area-inset-bottom) + 60px)
+            );
+
             transform: translateX(-50%);
+
             z-index: 1001;
+
             display: none;
+
             min-width: 220px;
+
             padding: 12px 16px;
+
             border: 2px solid #ff3131;
             border-radius: 12px;
+
             color: #fff;
             background: rgba(50, 0, 0, .94);
+
             text-align: center;
-            box-shadow: 0 0 24px rgba(255, 49, 49, .5);
+
+            box-shadow:
+                0 0 24px rgba(255, 49, 49, .5);
+
+            pointer-events: none;
         }
 
         #radarWarning.active {
@@ -100,14 +153,18 @@
 
         #radarWarningDistance {
             display: block;
+
             font-size: 24px;
             font-weight: 900;
         }
 
         #radarWarningLimit {
             display: block;
+
             margin-top: 4px;
+
             color: #ff5b5b;
+
             font-size: 14px;
             font-weight: 800;
         }
@@ -115,8 +172,41 @@
         .leaflet-control-attribution {
             font-size: 9px;
         }
+
+        /*
+         * IMPORTANTE PARA MOVIL:
+         * Leaflet necesita recibir correctamente los gestos
+         * de touch sobre el mapa.
+         */
+        #map,
+        .leaflet-container {
+            touch-action: pan-x pan-y pinch-zoom;
+        }
+
+        .leaflet-marker-icon,
+        .leaflet-marker-shadow {
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        @media (max-width: 600px) {
+            #controls {
+                gap: 5px;
+                padding: 6px;
+            }
+
+            #controls button {
+                padding: 9px 11px;
+                font-size: 12px;
+            }
+
+            #status {
+                font-size: 11px;
+            }
+        }
     </style>
 </head>
+
 <body>
 
 <div id="map"></div>
@@ -128,7 +218,9 @@
     <button id="resetButton">RESET</button>
 </div>
 
-<div id="status">INICIANDO...</div>
+<div id="status">
+    INICIANDO...
+</div>
 
 <div id="radarWarning">
     <span id="radarWarningDistance">-- M</span>
@@ -136,57 +228,112 @@
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
 <script src="traffic-map.js"></script>
 
 <script>
-    document.addEventListener("DOMContentLoaded", () => {
-        const simulationButton = document.getElementById("simulationButton");
-        const moveButton = document.getElementById("moveButton");
-        const resetButton = document.getElementById("resetButton");
-        const gpsButton = document.getElementById("gpsButton");
+document.addEventListener("DOMContentLoaded", () => {
 
-        function updateButtons() {
-            const active = window.TrafficMap?.simulation?.active === true;
+    const simulationButton =
+        document.getElementById("simulationButton");
 
-            simulationButton.classList.toggle("active", active);
-            moveButton.classList.toggle("active", active);
-            moveButton.disabled = !active;
-        }
+    const moveButton =
+        document.getElementById("moveButton");
 
-        simulationButton.addEventListener("click", () => {
+    const resetButton =
+        document.getElementById("resetButton");
+
+    const gpsButton =
+        document.getElementById("gpsButton");
+
+
+    function updateButtons() {
+
+        const active =
+            window.TrafficMap?.simulation?.active === true;
+
+        simulationButton.classList.toggle(
+            "active",
+            active
+        );
+
+        moveButton.classList.toggle(
+            "active",
+            active
+        );
+
+        moveButton.disabled = !active;
+    }
+
+
+    simulationButton.addEventListener(
+        "click",
+        () => {
+
             if (!window.TrafficMap) {
                 return;
             }
 
-            if (window.TrafficMap.simulation.active) {
+            if (
+                window.TrafficMap.simulation.active
+            ) {
+
                 window.TrafficMap.stopSimulation();
+
             } else {
+
                 window.TrafficMap.startSimulation();
+
             }
 
             updateButtons();
-        });
+        }
+    );
 
-        moveButton.addEventListener("click", () => {
-            if (!window.TrafficMap?.simulation?.active) {
+
+    moveButton.addEventListener(
+        "click",
+        () => {
+
+            if (
+                !window.TrafficMap?.simulation?.active
+            ) {
                 return;
             }
 
             window.TrafficMap.simulationStep();
-        });
+        }
+    );
 
-        resetButton.addEventListener("click", () => {
+
+    resetButton.addEventListener(
+        "click",
+        () => {
+
             window.TrafficMap?.resetSimulation();
+
             updateButtons();
-        });
+        }
+    );
 
-        gpsButton.addEventListener("click", () => {
+
+    gpsButton.addEventListener(
+        "click",
+        () => {
+
             window.TrafficMap?.requestLocation(true);
-        });
+        }
+    );
 
-        setInterval(updateButtons, 250);
-        updateButtons();
-    });
+
+    setInterval(
+        updateButtons,
+        250
+    );
+
+    updateButtons();
+
+});
 </script>
 
 </body>
