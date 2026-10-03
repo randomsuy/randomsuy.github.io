@@ -1,1675 +1,1506 @@
-class TrafficMap {
-    static map = null;
-    static userMarker = null;
-    static accuracyCircle = null;
+(() => {
+    "use strict";
 
-    static radarMarkers = [];
-    static radars = [];
-    static allRadars = [];
+    /*
+     * ============================================================
+     * KEOLEL RADAR ENGINE
+     *
+     * Dependencias:
+     * - Leaflet 1.9.4
+     * - OpenStreetMap tiles
+     * - Overpass API para radares
+     * - Nominatim para geocodificación
+     * - OSRM para rutas
+     *
+     * Expone:
+     *
+     * window.TrafficMap
+     * ============================================================
+     */
 
-    static watchId = null;
-    static lastPosition = null;
-    static previousPosition = null;
+    const CONFIG = {
+        map: {
+            defaultCenter: [-34.9011, -56.1645],
+            defaultZoom: 13,
+            userZoom: 16
+        },
 
-    static warnedRadars = new Set();
+        gps: {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 3000
+        },
 
-    static initialized = false;
-    static locationRequestInProgress = false;
-    static radarLoadInProgress = false;
+        radar: {
+            warningDistance: 300,
+            queryRadius: 50000,
+            refreshInterval: 300000
+        },
 
-    static loadedRadarZones = [];
-    static lastRadarZoneLoadPosition = null;
+        simulation: {
+            stepMeters: 20,
+            defaultSpeed: 5
+        },
 
-    static radarLoadRadius = 2000;
-    static radarDisplayRadius = 800;
-    static warningDistance = 300;
-    static reloadDistance = 800;
-    static roadMatchDistance = 35;
-    static routeRadarMatchDistance = 45;
+        services: {
+            nominatim:
+                "https://nominatim.openstreetmap.org/search",
 
-    static radarDataUrl =
-        "https://ckan-data.montevideo.gub.uy/dataset/159475cc-6584-48d3-961c-b6fa71e14cba/resource/4a80508d-5dde-483e-b88b-53d9d5d05382/download/ubicacion_de_radares_setiembre_2026.csv";
+            osrm:
+                "https://router.project-osrm.org/route/v1/driving",
 
-    static overpassUrls = [
-        "https://overpass-api.de/api/interpreter",
-        "https://overpass.kumi.systems/api/interpreter",
-        "https://overpass.private.coffee/api/interpreter"
-    ];
-
-    static nominatimUrl =
-        "https://nominatim.openstreetmap.org/search";
-
-    static osrmUrl =
-        "https://router.project-osrm.org/route/v1/driving";
-
-    static route = null;
-    static routeLayer = null;
-    static routeDestinationMarker = null;
-    static routeRadars = [];
-    static routeProgress = 0;
-    static routeLastPosition = null;
-    static routeRequestInProgress = false;
-
-    static testMode = {
-        active: false,
-        latitude: null,
-        longitude: null,
-        heading: 0,
-        speed: 40,
-        moveInterval: null,
-        stepMeters: 10,
-        movementTimer: null,
-        manualCamera: true
+            overpass:
+                "https://overpass-api.de/api/interpreter"
+        }
     };
 
-    static searchDebounceTimer = null;
-    static warningTimeout = null;
-    static testKeyHandler = null;
-    static testMapClickHandler = null;
+    const state = {
+        initialized: false,
 
-    static async init() {
-        if (this.initialized) {
-            return;
-        }
+        map: null,
 
-        this.initialized = true;
+        userMarker: null,
 
-        this.createMap();
-        this.createControls();
-        this.createTestControls();
-        this.setupVoice();
+        accuracyCircle: null,
 
-        this.setSystemStatus("SYSTEM ONLINE");
-        this.setGpsState("OFF");
+        destinationMarker: null,
 
-        this.requestLocation();
-        this.loadMontevideoRadars();
+        routeLine: null,
+
+        radarLayer: null,
+
+        routeRadarLayer: null,
+
+        radars: [],
+
+        radarCount: 0,
+
+        locationWatchId: null,
+
+        locationActive: false,
+
+        lastPosition: null,
+
+        destination: null,
+
+        destinationLatitude: null,
+
+        destinationLongitude: null,
+
+        route: null,
+
+        simulation: {
+            active: false,
+            latitude: null,
+            longitude: null,
+            heading: 0,
+            speed: CONFIG.simulation.defaultSpeed,
+            radar: null,
+            distance: null
+        },
+
+        warningRadar: null,
+
+        radarRefreshTimer: null,
+
+        lastRadarQuery: null
+    };
+
+    /*
+     * ============================================================
+     * UTILIDADES
+     * ============================================================
+     */
+
+    function byId(id) {
+        return document.getElementById(id);
     }
 
-    static createMap() {
-        if (typeof L === "undefined") {
-            console.error("Leaflet no está cargado.");
-            this.showStatus("Error: Leaflet no está cargado.");
-            return;
+    function safeNumber(value, fallback = 0) {
+        const number = Number(value);
+
+        return Number.isFinite(number)
+            ? number
+            : fallback;
+    }
+
+    function setText(id, value) {
+        const element = byId(id);
+
+        if (element) {
+            element.textContent = String(value);
+        }
+    }
+
+    function showStatus(message) {
+        setText("mapStatus", message);
+    }
+
+    function formatSpeed(kmh) {
+        const value = safeNumber(kmh, 0);
+
+        return `${Math.round(value)} KM/H`;
+    }
+
+    function formatRadarCount(count) {
+        return String(
+            Math.max(0, Number(count) || 0)
+        ).padStart(2, "0");
+    }
+
+    /*
+     * ============================================================
+     * DISTANCIA / GEOMETRÍA
+     * ============================================================
+     */
+
+    function distanceMeters(
+        latitude1,
+        longitude1,
+        latitude2,
+        longitude2
+    ) {
+        const R = 6371000;
+
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
+
+        const deltaLat =
+            (Number(latitude2) -
+                Number(latitude1)) *
+            Math.PI / 180;
+
+        const deltaLng =
+            (Number(longitude2) -
+                Number(longitude1)) *
+            Math.PI / 180;
+
+        const a =
+            Math.sin(deltaLat / 2) ** 2 +
+            Math.cos(lat1) *
+            Math.cos(lat2) *
+            Math.sin(deltaLng / 2) ** 2;
+
+        const c =
+            2 *
+            Math.atan2(
+                Math.sqrt(a),
+                Math.sqrt(1 - a)
+            );
+
+        return R * c;
+    }
+
+    function bearingBetween(
+        latitude1,
+        longitude1,
+        latitude2,
+        longitude2
+    ) {
+        const lat1 =
+            Number(latitude1) *
+            Math.PI / 180;
+
+        const lat2 =
+            Number(latitude2) *
+            Math.PI / 180;
+
+        const deltaLng =
+            (Number(longitude2) -
+                Number(longitude1)) *
+            Math.PI / 180;
+
+        const y =
+            Math.sin(deltaLng) *
+            Math.cos(lat2);
+
+        const x =
+            Math.cos(lat1) *
+            Math.sin(lat2) -
+            Math.sin(lat1) *
+            Math.cos(lat2) *
+            Math.cos(deltaLng);
+
+        const angle =
+            Math.atan2(y, x) *
+            180 /
+            Math.PI;
+
+        return (angle + 360) % 360;
+    }
+
+    function normalizeBearing(value) {
+        return (
+            (Number(value) % 360 + 360) %
+            360
+        );
+    }
+
+    function destinationPoint(
+        latitude,
+        longitude,
+        bearing,
+        distance
+    ) {
+        const R = 6371000;
+
+        const lat1 =
+            Number(latitude) *
+            Math.PI / 180;
+
+        const lon1 =
+            Number(longitude) *
+            Math.PI / 180;
+
+        const theta =
+            Number(bearing) *
+            Math.PI / 180;
+
+        const delta =
+            Number(distance) / R;
+
+        const lat2 =
+            Math.asin(
+                Math.sin(lat1) *
+                Math.cos(delta) +
+                Math.cos(lat1) *
+                Math.sin(delta) *
+                Math.cos(theta)
+            );
+
+        const lon2 =
+            lon1 +
+            Math.atan2(
+                Math.sin(theta) *
+                Math.sin(delta) *
+                Math.cos(lat1),
+                Math.cos(delta) -
+                Math.sin(lat1) *
+                Math.sin(lat2)
+            );
+
+        return {
+            latitude:
+                lat2 *
+                180 /
+                Math.PI,
+
+            longitude:
+                lon2 *
+                180 /
+                Math.PI
+        };
+    }
+
+    /*
+     * ============================================================
+     * ICONOS
+     * ============================================================
+     */
+
+    function createUserIcon() {
+        return L.divIcon({
+            className: "keolel-user-marker",
+
+            html: `
+                <div style="
+                    width:18px;
+                    height:18px;
+                    border-radius:50%;
+                    background:#36c8d8;
+                    border:3px solid #071014;
+                    box-shadow:
+                        0 0 0 3px rgba(54,200,216,.25),
+                        0 0 22px rgba(54,200,216,.9);
+                "></div>
+            `,
+
+            iconSize: [24, 24],
+            iconAnchor: [12, 12]
+        });
+    }
+
+    function createRadarIcon(limit) {
+        const speed =
+            Number(limit);
+
+        const label =
+            Number.isFinite(speed) &&
+            speed > 0
+                ? speed
+                : "—";
+
+        return L.divIcon({
+            className: "keolel-radar-marker",
+
+            html: `
+                <div style="
+                    position:relative;
+                    width:34px;
+                    height:34px;
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    border-radius:50%;
+                    background:#190708;
+                    border:2px solid #ff3131;
+                    color:#ff4a4a;
+                    font-family:monospace;
+                    font-size:9px;
+                    font-weight:700;
+                    box-shadow:
+                        0 0 12px rgba(255,49,49,.8),
+                        0 0 28px rgba(255,49,49,.35);
+                ">
+                    ${label}
+                </div>
+            `,
+
+            iconSize: [34, 34],
+            iconAnchor: [17, 17]
+        });
+    }
+
+    /*
+     * ============================================================
+     * MAPA
+     * ============================================================
+     */
+
+    function initializeMap() {
+        if (!window.L) {
+            showStatus(
+                "LEAFLET NO DISPONIBLE"
+            );
+
+            return false;
         }
 
-        const mapElement = document.getElementById("map");
+        const mapElement =
+            byId("map");
 
         if (!mapElement) {
-            console.error("No existe el elemento #map.");
-            return;
+            return false;
         }
 
-        this.map = L.map("map", {
-            zoomControl: true,
-            attributionControl: true,
+        state.map =
+            L.map(
+                mapElement,
+                {
+                    center:
+                    CONFIG.map.defaultCenter,
 
-            dragging: true,
-            touchZoom: true,
-            scrollWheelZoom: true,
-            doubleClickZoom: true,
-            boxZoom: true,
-            keyboard: true
-        }).setView(
-            [-34.9011, -56.1645],
-            13
-        );
+                    zoom:
+                    CONFIG.map.defaultZoom,
+
+                    zoomControl: true,
+
+                    attributionControl: true,
+
+                    preferCanvas: true
+                }
+            );
 
         L.tileLayer(
             "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
             {
                 maxZoom: 19,
+
                 attribution:
-                    "&copy; OpenStreetMap contributors"
-            }
-        ).addTo(this.map);
+                    '&copy; OpenStreetMap contributors',
 
-        this.testMapClickHandler = event => {
-            if (!this.testMode.active) {
-                return;
+                crossOrigin: true
             }
+        ).addTo(state.map);
 
-            if (!event?.latlng) {
-                return;
+        state.radarLayer =
+            L.layerGroup()
+                .addTo(state.map);
+
+        state.routeRadarLayer =
+            L.layerGroup()
+                .addTo(state.map);
+
+        state.map.on(
+            "click",
+            event => {
+                if (!state.simulation.active) {
+                    return;
+                }
+
+                state.simulation.latitude =
+                    event.latlng.lat;
+
+                state.simulation.longitude =
+                    event.latlng.lng;
+
+                updateSimulationPosition();
             }
+        );
 
-            this.setTestPosition(
-                event.latlng.lat,
-                event.latlng.lng,
-                this.testMode.heading,
-                false
+        return true;
+    }
+
+    /*
+     * ============================================================
+     * GPS
+     * ============================================================
+     */
+
+    function requestLocation(force = false) {
+        if (state.simulation.active && !force) {
+            return;
+        }
+
+        if (!navigator.geolocation) {
+            state.locationActive = false;
+
+            updateGpsUI(false);
+
+            showStatus(
+                "GPS NO DISPONIBLE"
             );
 
-            this.showStatus(
-                `TEST · posición manual ${event.latlng.lat.toFixed(6)}, ${event.latlng.lng.toFixed(6)}`
+            return;
+        }
+
+        showStatus(
+            "OBTENIENDO UBICACIÓN..."
+        );
+
+        navigator.geolocation.getCurrentPosition(
+            handlePosition,
+            handlePositionError,
+            CONFIG.gps
+        );
+
+        startLocationWatch();
+    }
+
+    function startLocationWatch() {
+        if (
+            state.locationWatchId !== null
+        ) {
+            return;
+        }
+
+        if (!navigator.geolocation) {
+            return;
+        }
+
+        state.locationWatchId =
+            navigator.geolocation.watchPosition(
+                handlePosition,
+                handlePositionError,
+                CONFIG.gps
             );
+    }
+
+    function stopLocationWatch() {
+        if (
+            state.locationWatchId === null
+        ) {
+            return;
+        }
+
+        navigator.geolocation.clearWatch(
+            state.locationWatchId
+        );
+
+        state.locationWatchId = null;
+    }
+
+    function handlePosition(position) {
+        if (!position?.coords) {
+            return;
+        }
+
+        const latitude =
+            safeNumber(
+                position.coords.latitude
+            );
+
+        const longitude =
+            safeNumber(
+                position.coords.longitude
+            );
+
+        const accuracy =
+            safeNumber(
+                position.coords.accuracy,
+                0
+            );
+
+        const speed =
+            safeNumber(
+                position.coords.speed,
+                0
+            );
+
+        let heading =
+            Number(
+                position.coords.heading
+            );
+
+        if (!Number.isFinite(heading)) {
+            heading =
+                state.lastPosition?.heading ??
+                state.simulation.heading ??
+                0;
+        }
+
+        state.lastPosition = {
+            latitude,
+            longitude,
+            accuracy,
+            speed,
+            heading,
+            timestamp: Date.now()
         };
 
-        this.map.on(
-            "click",
-            this.testMapClickHandler
-        );
-    }
+        state.locationActive = true;
 
-    static createControls() {
-        const mapContainer =
-            document.getElementById("map");
+        updateGpsUI(true);
 
-        if (!mapContainer) {
-            return;
-        }
-
-        mapContainer.style.position = "relative";
-
-        const navigationPanel =
-            document.createElement("div");
-
-        navigationPanel.id =
-            "navigationPanel";
-
-        const searchWrapper =
-            document.createElement("div");
-
-        searchWrapper.id =
-            "destinationSearchWrapper";
-
-        const searchInput =
-            document.createElement("input");
-
-        searchInput.type = "search";
-        searchInput.id = "destinationSearch";
-        searchInput.placeholder =
-            "Buscar destino...";
-        searchInput.autocomplete = "off";
-
-        const clearRouteButton =
-            document.createElement("button");
-
-        clearRouteButton.type = "button";
-        clearRouteButton.id =
-            "clearRouteButton";
-        clearRouteButton.textContent =
-            "✕";
-
-        clearRouteButton.addEventListener(
-            "click",
-            () => {
-                searchInput.value = "";
-                this.clearRoute();
-                this.clearSearchResults();
-            }
+        updateUserMarker(
+            latitude,
+            longitude,
+            speed
         );
 
-        const searchResults =
-            document.createElement("div");
-
-        searchResults.id =
-            "destinationResults";
-
-        searchInput.addEventListener(
-            "input",
-            () => {
-                clearTimeout(
-                    this.searchDebounceTimer
-                );
-
-                const query =
-                    searchInput.value.trim();
-
-                if (query.length < 3) {
-                    this.clearSearchResults();
-                    return;
-                }
-
-                this.searchDebounceTimer =
-                    setTimeout(
-                        () => {
-                            this.searchDestination(
-                                query
-                            );
-                        },
-                        450
-                    );
-            }
-        );
-
-        searchInput.addEventListener(
-            "keydown",
-            event => {
-                if (
-                    event.key === "Enter"
-                ) {
-                    event.preventDefault();
-
-                    const first =
-                        searchResults.querySelector(
-                            "[data-lat]"
-                        );
-
-                    if (first) {
-                        first.click();
-                    }
-                }
-
-                if (
-                    event.key === "Escape"
-                ) {
-                    this.clearSearchResults();
-                }
-            }
-        );
-
-        searchWrapper.appendChild(
-            searchInput
-        );
-
-        searchWrapper.appendChild(
-            clearRouteButton
-        );
-
-        searchWrapper.appendChild(
-            searchResults
-        );
-
-        const locateButton =
-            document.createElement("button");
-
-        locateButton.type = "button";
-        locateButton.id = "locateButton";
-        locateButton.textContent =
-            "📍 MI UBICACIÓN";
-
-        locateButton.addEventListener(
-            "click",
-            () => {
-                if (this.testMode.active) {
-                    this.disableTestMode();
-                }
-
-                this.requestLocation(true);
-            }
-        );
-
-        const routeInfo =
-            document.createElement("div");
-
-        routeInfo.id =
-            "routeInfo";
-
-        routeInfo.innerHTML =
-            `
-            <div id="routeDestinationText">
-                SIN DESTINO
-            </div>
-            <div id="routeDistanceText">
-                —
-            </div>
-            <div id="routeInstructionText">
-                —
-            </div>
-            `;
-
-        navigationPanel.appendChild(
-            searchWrapper
-        );
-
-        navigationPanel.appendChild(
-            locateButton
-        );
-
-        navigationPanel.appendChild(
-            routeInfo
-        );
-
-        mapContainer.appendChild(
-            navigationPanel
-        );
-    }
-
-    static createTestControls() {
-        const mapContainer =
-            document.getElementById("map");
-
-        if (!mapContainer) {
-            return;
-        }
-
-        const panel =
-            document.createElement("div");
-
-        panel.id =
-            "testModePanel";
-
-        const toggle =
-            document.createElement("button");
-
-        toggle.type = "button";
-        toggle.id =
-            "testModeButton";
-
-        toggle.textContent =
-            "🧪 ACTIVAR MODO PRUEBA";
-
-        toggle.addEventListener(
-            "click",
-            () => {
-                if (this.testMode.active) {
-                    this.disableTestMode();
-                } else {
-                    this.enableTestMode();
-                }
-            }
-        );
-
-        const controls =
-            document.createElement("div");
-
-        controls.id =
-            "testMovementControls";
-
-        const forward =
-            document.createElement("button");
-
-        forward.type = "button";
-        forward.textContent = "▲";
-        forward.title = "Avanzar";
-
-        const left =
-            document.createElement("button");
-
-        left.type = "button";
-        left.textContent = "◀";
-        left.title = "Girar izquierda";
-
-        const stop =
-            document.createElement("button");
-
-        stop.type = "button";
-        stop.textContent = "●";
-        stop.title = "Detener";
-
-        const right =
-            document.createElement("button");
-
-        right.type = "button";
-        right.textContent = "▶";
-        right.title = "Girar derecha";
-
-        const backward =
-            document.createElement("button");
-
-        backward.type = "button";
-        backward.textContent = "▼";
-        backward.title = "Retroceder";
-
-        controls.appendChild(
-            forward
-        );
-
-        controls.appendChild(
-            document.createElement("br")
-        );
-
-        controls.appendChild(
-            left
-        );
-
-        controls.appendChild(
-            stop
-        );
-
-        controls.appendChild(
-            right
-        );
-
-        controls.appendChild(
-            document.createElement("br")
-        );
-
-        controls.appendChild(
-            backward
-        );
-
-        const speedLabel =
-            document.createElement("div");
-
-        speedLabel.id =
-            "testSpeedLabel";
-
-        speedLabel.textContent =
-            "40 KM/H";
-
-        const faster =
-            document.createElement("button");
-
-        faster.type = "button";
-        faster.textContent =
-            "+ VELOCIDAD";
-
-        const slower =
-            document.createElement("button");
-
-        slower.type = "button";
-        slower.textContent =
-            "- VELOCIDAD";
-
-        const status =
-            document.createElement("div");
-
-        status.id =
-            "testModeStatus";
-
-        status.textContent =
-            "Modo prueba desactivado.";
-
-        const pressMove =
-            direction => {
-                if (
-                    !this.testMode.active
-                ) {
-                    return;
-                }
-
-                if (
-                    direction === "left"
-                ) {
-                    this.testMode.heading =
-                        (
-                            this.testMode.heading -
-                            15 +
-                            360
-                        ) % 360;
-
-                    this.updateTestModeUI();
-                    return;
-                }
-
-                if (
-                    direction === "right"
-                ) {
-                    this.testMode.heading =
-                        (
-                            this.testMode.heading +
-                            15
-                        ) % 360;
-
-                    this.updateTestModeUI();
-                    return;
-                }
-
-                if (
-                    direction === "forward"
-                ) {
-                    this.moveTestPosition(
-                        this.testMode.heading
-                    );
-                }
-
-                if (
-                    direction === "backward"
-                ) {
-                    this.moveTestPosition(
-                        (
-                            this.testMode.heading +
-                            180
-                        ) % 360
-                    );
-                }
-
-                this.updateTestModeUI();
-            };
-
-        const startContinuousMove =
-            direction => {
-                if (!this.testMode.active) {
-                    return;
-                }
-
-                this.stopContinuousTestMovement();
-
-                pressMove(direction);
-
-                this.testMode.movementTimer =
-                    setInterval(
-                        () => {
-                            if (
-                                !this.testMode.active
-                            ) {
-                                this.stopContinuousTestMovement();
-                                return;
-                            }
-
-                            pressMove(direction);
-                        },
-                        250
-                    );
-            };
-
-        const stopContinuousMove =
-            () => {
-                this.stopContinuousTestMovement();
-            };
-
-        forward.addEventListener(
-            "mousedown",
-            () => startContinuousMove("forward")
-        );
-
-        forward.addEventListener(
-            "mouseup",
-            stopContinuousMove
-        );
-
-        forward.addEventListener(
-            "mouseleave",
-            stopContinuousMove
-        );
-
-        backward.addEventListener(
-            "mousedown",
-            () => startContinuousMove("backward")
-        );
-
-        backward.addEventListener(
-            "mouseup",
-            stopContinuousMove
-        );
-
-        backward.addEventListener(
-            "mouseleave",
-            stopContinuousMove
-        );
-
-        forward.addEventListener(
-            "touchstart",
-            event => {
-                event.preventDefault();
-                startContinuousMove("forward");
-            },
-            {
-                passive: false
-            }
-        );
-
-        forward.addEventListener(
-            "touchend",
-            stopContinuousMove
-        );
-
-        backward.addEventListener(
-            "touchstart",
-            event => {
-                event.preventDefault();
-                startContinuousMove("backward");
-            },
-            {
-                passive: false
-            }
-        );
-
-        backward.addEventListener(
-            "touchend",
-            stopContinuousMove
-        );
-
-        left.addEventListener(
-            "click",
-            () => pressMove("left")
-        );
-
-        right.addEventListener(
-            "click",
-            () => pressMove("right")
-        );
-
-        stop.addEventListener(
-            "click",
-            () => {
-                this.testMode.speed = 0;
-                this.stopContinuousTestMovement();
-                this.updateTestModeUI();
-            }
-        );
-
-        faster.addEventListener(
-            "click",
-            () => {
-                this.testMode.speed =
-                    Math.min(
-                        150,
-                        this.testMode.speed + 10
-                    );
-
-                this.updateTestModeUI();
-            }
-        );
-
-        slower.addEventListener(
-            "click",
-            () => {
-                this.testMode.speed =
-                    Math.max(
-                        0,
-                        this.testMode.speed - 10
-                    );
-
-                this.updateTestModeUI();
-            }
-        );
-
-        panel.appendChild(
-            toggle
-        );
-
-        panel.appendChild(
-            controls
-        );
-
-        panel.appendChild(
-            faster
-        );
-
-        panel.appendChild(
-            slower
-        );
-
-        panel.appendChild(
-            speedLabel
-        );
-
-        panel.appendChild(
-            status
-        );
-
-        mapContainer.appendChild(
-            panel
-        );
-
-        this.testKeyHandler =
-            event => {
-                if (
-                    !this.testMode.active
-                ) {
-                    return;
-                }
-
-                const target =
-                    event.target;
-
-                if (
-                    target &&
-                    (
-                        target.tagName === "INPUT" ||
-                        target.tagName === "TEXTAREA" ||
-                        target.isContentEditable
-                    )
-                ) {
-                    return;
-                }
-
-                const key =
-                    String(
-                        event.key
-                    ).toLowerCase();
-
-                if (
-                    event.key === "ArrowUp" ||
-                    key === "w"
-                ) {
-                    event.preventDefault();
-                    pressMove("forward");
-                    return;
-                }
-
-                if (
-                    event.key === "ArrowDown" ||
-                    key === "s"
-                ) {
-                    event.preventDefault();
-                    pressMove("backward");
-                    return;
-                }
-
-                if (
-                    event.key === "ArrowLeft" ||
-                    key === "a"
-                ) {
-                    event.preventDefault();
-                    pressMove("left");
-                    return;
-                }
-
-                if (
-                    event.key === "ArrowRight" ||
-                    key === "d"
-                ) {
-                    event.preventDefault();
-                    pressMove("right");
-                    return;
-                }
-
-                if (
-                    event.code === "Space"
-                ) {
-                    event.preventDefault();
-                    this.testMode.speed = 0;
-                    this.stopContinuousTestMovement();
-                    this.updateTestModeUI();
-                }
-            };
-
-        document.addEventListener(
-            "keydown",
-            this.testKeyHandler
-        );
-    }
-
-    static stopContinuousTestMovement() {
         if (
-            this.testMode.movementTimer
+            state.map &&
+            !state.simulation.active
         ) {
-            clearInterval(
-                this.testMode.movementTimer
+            const currentZoom =
+                state.map.getZoom();
+
+            if (
+                !state.userMarker ||
+                currentZoom < 14
+            ) {
+                state.map.setView(
+                    [latitude, longitude],
+                    CONFIG.map.userZoom,
+                    {
+                        animate: true
+                    }
+                );
+            }
+        }
+
+        checkRadars(
+            latitude,
+            longitude,
+            heading
+        );
+
+        showStatus(
+            `GPS ACTIVO · ±${Math.round(
+                accuracy
+            )} M`
+        );
+
+        updateSpeedUI(speed);
+
+        if (
+            state.destination
+        ) {
+            calculateRouteToDestination(
+                state.destination.latitude,
+                state.destination.longitude,
+                true
+            );
+        }
+    }
+
+    function handlePositionError(error) {
+        console.warn(
+            "[Keolel Radar] GPS:",
+            error
+        );
+
+        state.locationActive = false;
+
+        updateGpsUI(false);
+
+        let message =
+            "ERROR DE GPS";
+
+        if (error?.code === 1) {
+            message =
+                "PERMISO GPS DENEGADO";
+        }
+
+        if (error?.code === 2) {
+            message =
+                "UBICACIÓN NO DISPONIBLE";
+        }
+
+        if (error?.code === 3) {
+            message =
+                "TIMEOUT DE GPS";
+        }
+
+        showStatus(message);
+    }
+
+    /*
+     * ============================================================
+     * USER MARKER
+     * ============================================================
+     */
+
+    function updateUserMarker(
+        latitude,
+        longitude,
+        speed = 0
+    ) {
+        if (!state.map) {
+            return;
+        }
+
+        if (!state.userMarker) {
+            state.userMarker =
+                L.marker(
+                    [
+                        latitude,
+                        longitude
+                    ],
+                    {
+                        icon:
+                            createUserIcon(),
+
+                        zIndexOffset: 1000
+                    }
+                )
+                    .addTo(state.map)
+                    .bindTooltip(
+                        "TU POSICIÓN",
+                        {
+                            direction:
+                                "top"
+                        }
+                    );
+        } else {
+            state.userMarker.setLatLng(
+                [
+                    latitude,
+                    longitude
+                ]
+            );
+        }
+
+        if (!state.accuracyCircle) {
+            state.accuracyCircle =
+                L.circle(
+                    [
+                        latitude,
+                        longitude
+                    ],
+                    {
+                        radius:
+                            state.lastPosition?.accuracy ||
+                            10,
+
+                        color:
+                            "#36c8d8",
+
+                        weight: 1,
+
+                        opacity: .35,
+
+                        fillColor:
+                            "#36c8d8",
+
+                        fillOpacity: .05,
+
+                        interactive: false
+                    }
+                ).addTo(state.map);
+        } else {
+            state.accuracyCircle.setLatLng(
+                [
+                    latitude,
+                    longitude
+                ]
             );
 
-            this.testMode.movementTimer =
-                null;
+            state.accuracyCircle.setRadius(
+                state.lastPosition?.accuracy ||
+                10
+            );
+        }
+
+        updateSpeedUI(speed);
+    }
+
+    function updateSpeedUI(speedMetersPerSecond) {
+        const speed =
+            safeNumber(
+                speedMetersPerSecond,
+                0
+            );
+
+        const kmh =
+            speed * 3.6;
+
+        setText(
+            "mapSpeed",
+            formatSpeed(kmh)
+        );
+    }
+
+    /*
+     * ============================================================
+     * RADARES
+     * ============================================================
+     */
+
+    async function loadRadars(
+        latitude,
+        longitude
+    ) {
+        if (!Number.isFinite(latitude) ||
+            !Number.isFinite(longitude)) {
+            return;
+        }
+
+        const now = Date.now();
+
+        if (
+            state.lastRadarQuery &&
+            now - state.lastRadarQuery <
+            30000
+        ) {
+            return;
+        }
+
+        state.lastRadarQuery = now;
+
+        showStatus(
+            "CARGANDO RADARES..."
+        );
+
+        const radius =
+            CONFIG.radar.queryRadius;
+
+        const query = `
+[out:json][timeout:25];
+(
+  node["highway"="speed_camera"]
+    (around:${radius},${latitude},${longitude});
+
+  way["highway"="speed_camera"]
+    (around:${radius},${latitude},${longitude});
+
+  node["enforcement"="speed"]
+    (around:${radius},${latitude},${longitude});
+
+  way["enforcement"="speed"]
+    (around:${radius},${latitude},${longitude});
+);
+out center tags;
+`;
+
+        try {
+            const response =
+                await fetch(
+                    CONFIG.services.overpass,
+                    {
+                        method: "POST",
+
+                        headers: {
+                            "Content-Type":
+                                "application/x-www-form-urlencoded"
+                        },
+
+                        body:
+                            "data=" +
+                            encodeURIComponent(
+                                query
+                            )
+                    }
+                );
+
+            if (!response.ok) {
+                throw new Error(
+                    `Overpass HTTP ${response.status}`
+                );
+            }
+
+            const data =
+                await response.json();
+
+            const radars =
+                normalizeRadarData(
+                    data?.elements || []
+                );
+
+            state.radars =
+                deduplicateRadars(
+                    radars
+                );
+
+            state.radarCount =
+                state.radars.length;
+
+            renderRadars();
+
+            updateRadarCountUI();
+
+            showStatus(
+                `RADARES ACTIVOS · ${state.radarCount}`
+            );
+
+        } catch (error) {
+            console.error(
+                "[Keolel Radar] Overpass:",
+                error
+            );
+
+            showStatus(
+                "ERROR CARGANDO RADARES"
+            );
         }
     }
 
-    static setupVoice() {
+    function normalizeRadarData(elements) {
+        const result = [];
+
+        for (const element of elements) {
+            let latitude = null;
+            let longitude = null;
+
+            if (
+                Number.isFinite(Number(element.lat)) &&
+                Number.isFinite(Number(element.lon))
+            ) {
+                latitude = Number(element.lat);
+                longitude = Number(element.lon);
+            } else if (element.center) {
+                latitude = Number(element.center.lat);
+                longitude = Number(element.center.lon);
+            }
+
+            if (
+                !Number.isFinite(latitude) ||
+                !Number.isFinite(longitude)
+            ) {
+                continue;
+            }
+
+            const tags = element.tags || {};
+
+            const limit = parseSpeedLimit(
+                tags.maxspeed ||
+                tags.maxspeed_forward ||
+                tags.maxspeed_backward ||
+                null
+            );
+
+            result.push({
+                id: String(
+                    element.id ??
+                    `${latitude}:${longitude}`
+                ),
+
+                latitude,
+                longitude,
+                limit,
+
+                direction:
+                    tags.direction || null,
+
+                name:
+                    tags.name ||
+                    "RADAR DE VELOCIDAD",
+
+                source: "OpenStreetMap"
+            });
+        }
+
+        return result;
+    }
+
+    function parseSpeedLimit(value) {
+        if (
+            value === null ||
+            value === undefined
+        ) {
+            return null;
+        }
+
+        const match =
+            String(value).match(
+                /(\d+(?:\.\d+)?)/
+            );
+
+        if (!match) {
+            return null;
+        }
+
+        return Number(match[1]);
+    }
+
+    function deduplicateRadars(
+        radars
+    ) {
+        const unique = [];
+
+        for (
+            const radar of radars
+            ) {
+            const exists =
+                unique.some(
+                    item =>
+                        distanceMeters(
+                            item.latitude,
+                            item.longitude,
+                            radar.latitude,
+                            radar.longitude
+                        ) < 20
+                );
+
+            if (!exists) {
+                unique.push(radar);
+            }
+        }
+
+        return unique;
+    }
+
+    function renderRadars() {
+        if (!state.radarLayer) {
+            return;
+        }
+
+        state.radarLayer.clearLayers();
+
+        state.radars.forEach(
+            radar => {
+                const marker =
+                    L.marker(
+                        [
+                            radar.latitude,
+                            radar.longitude
+                        ],
+                        {
+                            icon:
+                                createRadarIcon(
+                                    radar.limit
+                                )
+                        }
+                    );
+
+                const limitText =
+                    radar.limit
+                        ? `${radar.limit} KM/H`
+                        : "LÍMITE NO DISPONIBLE";
+
+                marker.bindPopup(`
+                    <div style="
+                        font-family:monospace;
+                        color:#111;
+                        min-width:180px;
+                    ">
+                        <strong>
+                            RADAR DE VELOCIDAD
+                        </strong>
+                        <br>
+                        LÍMITE: ${limitText}
+                        <br>
+                        FUENTE: OPENSTREETMAP
+                    </div>
+                `);
+
+                marker.addTo(
+                    state.radarLayer
+                );
+            }
+        );
+    }
+
+    /*
+     * ============================================================
+     * RADAR DETECTION
+     * ============================================================
+     */
+
+    function checkRadars(
+        latitude,
+        longitude,
+        heading = 0
+    ) {
+        if (
+            !Array.isArray(
+                state.radars
+            ) ||
+            state.radars.length === 0
+        ) {
+            hideRadarWarning();
+
+            return null;
+        }
+
+        let closest = null;
+
+        for (
+            const radar of state.radars
+            ) {
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    radar.latitude,
+                    radar.longitude
+                );
+
+            if (
+                !closest ||
+                distance <
+                closest.distance
+            ) {
+                closest = {
+                    radar,
+                    distance
+                };
+            }
+        }
+
+        if (
+            !closest ||
+            closest.distance >
+            CONFIG.radar.warningDistance
+        ) {
+            hideRadarWarning();
+
+            return null;
+        }
+
+        state.warningRadar =
+            closest.radar;
+
+        showRadarWarning(
+            closest.radar,
+            closest.distance
+        );
+
+        return closest;
+    }
+
+    function showRadarWarning(
+        radar,
+        distance
+    ) {
+        const warning =
+            byId("radarWarning");
+
+        if (!warning) {
+            return;
+        }
+
+        const distanceElement =
+            byId(
+                "radarWarningDistance"
+            );
+
+        const limitElement =
+            byId(
+                "radarWarningLimit"
+            );
+
+        const rounded =
+            Math.max(
+                1,
+                Math.round(distance)
+            );
+
+        if (distanceElement) {
+            distanceElement.textContent =
+                `${rounded} M`;
+        }
+
+        if (limitElement) {
+            limitElement.textContent =
+                radar.limit
+                    ? `LÍMITE ${radar.limit} KM/H`
+                    : "LÍMITE NO DISPONIBLE";
+        }
+
+        warning.classList.add(
+            "active"
+        );
+
+        /*
+         * Voz.
+         */
+        speakRadarWarning(
+            radar,
+            rounded
+        );
+    }
+
+    let lastSpeech = 0;
+
+    function speakRadarWarning(
+        radar,
+        distance
+    ) {
         if (
             !("speechSynthesis" in window)
         ) {
             return;
         }
 
-        window.speechSynthesis.getVoices();
+        const now = Date.now();
 
         if (
-            "onvoiceschanged" in
-            window.speechSynthesis
-        ) {
-            window.speechSynthesis.onvoiceschanged =
-                () => {
-                    window.speechSynthesis.getVoices();
-                };
-        }
-    }
-
-    static requestLocation(
-        center = false
-    ) {
-        if (!navigator.geolocation) {
-            this.setGpsState("N/A");
-
-            this.showStatus(
-                "Este navegador no soporta geolocalización."
-            );
-
-            return;
-        }
-
-        if (
-            location.protocol !== "https:" &&
-            location.hostname !== "localhost" &&
-            location.hostname !== "127.0.0.1" &&
-            location.hostname !== "::1"
-        ) {
-            this.setGpsState("HTTPS");
-
-            this.showStatus(
-                "En móvil debes abrir esta página mediante HTTPS."
-            );
-
-            return;
-        }
-
-        if (
-            this.locationRequestInProgress
+            now - lastSpeech <
+            10000
         ) {
             return;
         }
 
-        this.locationRequestInProgress =
-            true;
+        lastSpeech = now;
 
-        this.setGpsState("SEARCH");
+        const text =
+            radar.limit
+                ? `Radar a ${distance} metros. Límite ${radar.limit} kilómetros por hora.`
+                : `Radar a ${distance} metros.`;
 
-        this.showStatus(
-            "Obteniendo ubicación..."
-        );
+        try {
+            window.speechSynthesis.cancel();
 
-        const button =
-            document.getElementById(
-                "locateButton"
-            );
-
-        if (button) {
-            button.disabled = true;
-            button.textContent =
-                "📍 BUSCANDO...";
-        }
-
-        navigator.geolocation.getCurrentPosition(
-            position => {
-                this.locationRequestInProgress =
-                    false;
-
-                if (button) {
-                    button.disabled =
-                        false;
-
-                    button.textContent =
-                        "📍 MI UBICACIÓN";
-                }
-
-                this.handlePosition(
-                    position,
-                    center
+            const utterance =
+                new SpeechSynthesisUtterance(
+                    text
                 );
 
-                this.startWatching();
-            },
-            error => {
-                this.locationRequestInProgress =
-                    false;
+            utterance.lang =
+                "es-ES";
 
-                if (button) {
-                    button.disabled =
-                        false;
+            utterance.rate =
+                1;
 
-                    button.textContent =
-                        "📍 MI UBICACIÓN";
-                }
+            utterance.pitch =
+                1;
 
-                this.handleLocationError(
-                    error
-                );
-            },
-            {
-                enableHighAccuracy: true,
-                maximumAge: 5000,
-                timeout: 20000
-            }
-        );
-    }
-
-    static handleLocationError(
-        error
-    ) {
-        console.error(
-            "Error de ubicación:",
-            error
-        );
-
-        this.setGpsState("ERROR");
-
-        let message =
-            "No se pudo obtener tu ubicación.";
-
-        if (error?.code === 1) {
-            message =
-                "Permiso de ubicación denegado.";
-        }
-
-        if (error?.code === 2) {
-            message =
-                "No se pudo determinar tu ubicación.";
-        }
-
-        if (error?.code === 3) {
-            message =
-                "La ubicación tardó demasiado.";
-        }
-
-        this.showStatus(message);
-    }
-
-    static startWatching() {
-        if (
-            this.watchId !== null ||
-            !navigator.geolocation
-        ) {
-            return;
-        }
-
-        this.watchId =
-            navigator.geolocation.watchPosition(
-                position => {
-                    if (
-                        !this.testMode.active
-                    ) {
-                        this.handlePosition(
-                            position,
-                            false
-                        );
-                    }
-                },
-                error => {
-                    console.error(
-                        "Error siguiendo ubicación:",
-                        error
-                    );
-
-                    this.setGpsState("ERROR");
-                },
-                {
-                    enableHighAccuracy: true,
-                    maximumAge: 1000,
-                    timeout: 15000
-                }
+            window.speechSynthesis.speak(
+                utterance
             );
-    }
-
-    static handlePosition(
-        position,
-        center
-    ) {
-        if (
-            !position?.coords ||
-            this.testMode.active
-        ) {
-            return;
-        }
-
-        const latitude =
-            position.coords.latitude;
-
-        const longitude =
-            position.coords.longitude;
-
-        const accuracy =
-            position.coords.accuracy || 20;
-
-        let heading =
-            position.coords.heading;
-
-        const speed =
-            position.coords.speed;
-
-        if (
-            heading === null ||
-            heading === undefined ||
-            Number.isNaN(heading)
-        ) {
-            if (this.previousPosition) {
-                const movement =
-                    this.distanceMeters(
-                        this.previousPosition.latitude,
-                        this.previousPosition.longitude,
-                        latitude,
-                        longitude
-                    );
-
-                if (movement >= 3) {
-                    heading =
-                        this.calculateBearing(
-                            this.previousPosition.latitude,
-                            this.previousPosition.longitude,
-                            latitude,
-                            longitude
-                        );
-                }
-            }
-        }
-
-        this.previousPosition = {
-            latitude,
-            longitude
-        };
-
-        this.lastPosition = {
-            latitude,
-            longitude,
-            accuracy,
-            heading,
-            speed
-        };
-
-        this.setGpsState("ACTIVE");
-
-        this.updateUserMarker(
-            latitude,
-            longitude,
-            accuracy
-        );
-
-        if (
-            center &&
-            this.map
-        ) {
-            this.map.setView(
-                [
-                    latitude,
-                    longitude
-                ],
-                16
-            );
-        }
-
-        this.updateRadarArea(
-            latitude,
-            longitude
-        );
-
-        if (this.route) {
-            this.updateRouteProgress(
-                latitude,
-                longitude
-            );
-        } else {
-            this.renderNearbyRadars(
-                latitude,
-                longitude
-            );
-        }
-
-        this.checkRadars(
-            latitude,
-            longitude,
-            heading
-        );
-
-        this.updateNavigationInfo(
-            speed
-        );
-
-        this.updateRadarCount();
-
-        this.showStatus(
-            `Ubicación activa · precisión ${Math.round(
-                accuracy
-            )} m · ${this.allRadars.length} radares`
-        );
-    }
-
-    static updateUserMarker(
-        latitude,
-        longitude,
-        accuracy = 20
-    ) {
-        if (!this.map) {
-            return;
-        }
-
-        const position = [
-            latitude,
-            longitude
-        ];
-
-        if (!this.userMarker) {
-            this.userMarker =
-                L.circleMarker(
-                    position,
-                    {
-                        radius: 8,
-                        color: "#fff",
-                        weight: 3,
-                        fillColor: "#36c8d8",
-                        fillOpacity: 1
-                    }
-                ).addTo(this.map);
-
-            this.userMarker.bindPopup(
-                "<strong>Tu ubicación</strong>"
-            );
-        } else {
-            this.userMarker.setLatLng(
-                position
-            );
-        }
-
-        if (!this.accuracyCircle) {
-            this.accuracyCircle =
-                L.circle(
-                    position,
-                    {
-                        radius: accuracy,
-                        color: "#36c8d8",
-                        weight: 1,
-                        fillColor: "#36c8d8",
-                        fillOpacity: 0.08
-                    }
-                ).addTo(this.map);
-        } else {
-            this.accuracyCircle.setLatLng(
-                position
-            );
-
-            this.accuracyCircle.setRadius(
-                accuracy
+        } catch (error) {
+            console.warn(
+                "[Keolel Radar] Speech:",
+                error
             );
         }
     }
 
-    static enableTestMode() {
-        if (!this.map) {
-            return;
-        }
+    function hideRadarWarning() {
+        const warning =
+            byId("radarWarning");
 
-        if (
-            this.testMode.active
-        ) {
-            return;
-        }
-
-        this.stopRealTracking();
-
-        if (
-            this.lastPosition &&
-            Number.isFinite(
-                this.lastPosition.latitude
-            ) &&
-            Number.isFinite(
-                this.lastPosition.longitude
-            )
-        ) {
-            this.testMode.latitude =
-                this.lastPosition.latitude;
-
-            this.testMode.longitude =
-                this.lastPosition.longitude;
-
-            if (
-                Number.isFinite(
-                    this.lastPosition.heading
-                )
-            ) {
-                this.testMode.heading =
-                    this.lastPosition.heading;
-            }
-        } else {
-            const center =
-                this.map.getCenter();
-
-            this.testMode.latitude =
-                center.lat;
-
-            this.testMode.longitude =
-                center.lng;
-
-            this.testMode.heading = 0;
-        }
-
-        this.testMode.active = true;
-        this.testMode.speed = 40;
-        this.testMode.manualCamera = true;
-
-        this.stopContinuousTestMovement();
-
-        this.warnedRadars.clear();
-
-        this.setGpsState("TEST");
-
-        this.updateUserMarker(
-            this.testMode.latitude,
-            this.testMode.longitude,
-            5
-        );
-
-        this.lastPosition = {
-            latitude:
-                this.testMode.latitude,
-
-            longitude:
-                this.testMode.longitude,
-
-            accuracy: 5,
-
-            heading:
-                this.testMode.heading,
-
-            speed:
-                this.testMode.speed / 3.6
-        };
-
-        if (this.route) {
-            this.updateRouteProgress(
-                this.testMode.latitude,
-                this.testMode.longitude
-            );
-        } else {
-            this.renderNearbyRadars(
-                this.testMode.latitude,
-                this.testMode.longitude
+        if (warning) {
+            warning.classList.remove(
+                "active"
             );
         }
 
-        this.showSpeed(
-            this.testMode.speed
-        );
-
-        this.updateTestModeUI();
-
-        this.showStatus(
-            "Modo prueba activado · flechas/WASD para conducir · click en mapa para reposicionar"
-        );
+        state.warningRadar = null;
     }
 
-    static disableTestMode() {
-        if (
-            !this.testMode.active
-        ) {
-            this.requestLocation(true);
-            return;
-        }
+    /*
+     * ============================================================
+     * SIMULACIÓN
+     * ============================================================
+     */
 
-        this.stopContinuousTestMovement();
+    function startSimulation() {
+        let latitude =
+            state.lastPosition?.latitude;
 
-        this.testMode.active = false;
-
-        this.warnedRadars.clear();
-
-        this.setGpsState("SEARCH");
-
-        this.showStatus(
-            "Modo prueba desactivado. Recuperando ubicación real..."
-        );
-
-        this.requestLocation(true);
-    }
-
-    static setTestPosition(
-        latitude,
-        longitude,
-        heading = this.testMode.heading,
-        recenter = false
-    ) {
-        if (
-            !this.testMode.active
-        ) {
-            return;
-        }
+        let longitude =
+            state.lastPosition?.longitude;
 
         if (
             !Number.isFinite(latitude) ||
             !Number.isFinite(longitude)
         ) {
-            return;
+            const center =
+                state.map
+                    ? state.map.getCenter()
+                    : {
+                        lat:
+                            CONFIG.map.defaultCenter[0],
+
+                        lng:
+                            CONFIG.map.defaultCenter[1]
+                    };
+
+            latitude =
+                center.lat;
+
+            longitude =
+                center.lng;
         }
 
-        this.testMode.latitude =
+        state.simulation.active =
+            true;
+
+        state.simulation.latitude =
             latitude;
 
-        this.testMode.longitude =
+        state.simulation.longitude =
             longitude;
 
-        this.testMode.heading =
-            (
-                Number(heading) || 0
-            ) % 360;
+        state.simulation.heading =
+            Number(
+                state.lastPosition?.heading
+            ) || 0;
 
-        this.lastPosition = {
+        state.simulation.speed =
+            CONFIG.simulation.defaultSpeed;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.distance =
+            null;
+
+        updateUserMarker(
             latitude,
             longitude,
-            accuracy: 5,
-            heading:
-                this.testMode.heading,
-            speed:
-                this.testMode.speed / 3.6
-        };
-
-        this.updateUserMarker(
-            latitude,
-            longitude,
-            5
+            state.simulation.speed
         );
 
-        this.showSpeed(
-            this.testMode.speed
-        );
-
-        if (
-            recenter &&
-            this.map
-        ) {
-            this.map.setView(
+        if (state.map) {
+            state.map.setView(
                 [
                     latitude,
                     longitude
                 ],
-                this.map.getZoom(),
+                CONFIG.map.userZoom,
                 {
-                    animate: false
+                    animate: true
                 }
             );
         }
 
-        if (this.route) {
-            this.updateRouteProgress(
-                latitude,
-                longitude
-            );
-        } else {
-            this.renderNearbyRadars(
-                latitude,
-                longitude
-            );
-        }
-
-        this.checkRadars(
-            latitude,
-            longitude,
-            this.testMode.heading
+        showStatus(
+            "SIMULACIÓN ACTIVA"
         );
 
-        this.updateTestModeUI();
+        updateSimulationUI();
+
+        return true;
     }
 
-    static moveTestPosition(
-        heading
-    ) {
+    function stopSimulation() {
+        state.simulation.active =
+            false;
+
+        state.simulation.radar =
+            null;
+
+        state.simulation.distance =
+            null;
+
+        hideRadarWarning();
+
+        showStatus(
+            state.locationActive
+                ? "GPS ACTIVO"
+                : "GPS OFF"
+        );
+
+        return true;
+    }
+
+    function updateSimulationPosition() {
         if (
-            !this.testMode.active ||
-            !Number.isFinite(
-                this.testMode.latitude
-            ) ||
-            !Number.isFinite(
-                this.testMode.longitude
-            )
+            !state.simulation.active
         ) {
             return;
         }
 
-        const speed =
-            Math.max(
-                0,
-                Number(
-                    this.testMode.speed
-                ) || 0
+        const simulation =
+            state.simulation;
+
+        updateUserMarker(
+            simulation.latitude,
+            simulation.longitude,
+            simulation.speed
+        );
+
+        checkRadars(
+            simulation.latitude,
+            simulation.longitude,
+            simulation.heading
+        );
+
+        updateSimulationUI();
+
+        if (state.map) {
+            state.map.panTo(
+                [
+                    simulation.latitude,
+                    simulation.longitude
+                ],
+                {
+                    animate: true,
+                    duration: .25
+                }
             );
+        }
+    }
+
+    function updateSimulationUI() {
+        if (
+            !state.simulation.active
+        ) {
+            return;
+        }
+
+        const result =
+            findClosestRadar(
+                state.simulation.latitude,
+                state.simulation.longitude
+            );
+
+        state.simulation.radar =
+            result?.radar || null;
+
+        state.simulation.distance =
+            result?.distance ?? null;
 
         const distance =
-            speed <= 0
-                ? this.testMode.stepMeters
-                : Math.max(
-                    2,
-                    (
-                        speed / 3.6
-                    ) * 0.25
-                );
+            result?.distance;
 
-        this.testMode.heading =
-            (
-                Number(heading) || 0
-            ) % 360;
-
-        const next =
-            this.destinationPoint(
-                this.testMode.latitude,
-                this.testMode.longitude,
-                this.testMode.heading,
+        if (
+            Number.isFinite(distance) &&
+            distance <=
+            CONFIG.radar.warningDistance
+        ) {
+            showRadarWarning(
+                result.radar,
                 distance
             );
+        }
 
-        this.setTestPosition(
-            next.latitude,
-            next.longitude,
-            this.testMode.heading,
-            false
+        updateSpeedUI(
+            state.simulation.speed
         );
     }
 
-    static updateTestModeUI() {
-        const button =
-            document.getElementById(
-                "testModeButton"
-            );
-
-        const status =
-            document.getElementById(
-                "testModeStatus"
-            );
-
-        const speed =
-            document.getElementById(
-                "testSpeedLabel"
-            );
-
-        if (button) {
-            button.textContent =
-                this.testMode.active
-                    ? "⏹ DESACTIVAR MODO PRUEBA"
-                    : "🧪 ACTIVAR MODO PRUEBA";
-        }
-
-        if (speed) {
-            speed.textContent =
-                `${Math.round(
-                    this.testMode.speed
-                )} KM/H`;
-        }
-
-        if (!status) {
-            return;
-        }
-
-        if (!this.testMode.active) {
-            status.textContent =
-                "Modo prueba desactivado.";
-
-            return;
-        }
-
-        status.textContent =
-            `TEST · ${this.testMode.latitude.toFixed(
-                6
-            )}, ${this.testMode.longitude.toFixed(
-                6
-            )} · RUMBO ${Math.round(
-                this.testMode.heading
-            )}°`;
-    }
-
-    static stopRealTracking() {
-        if (
-            this.watchId !== null &&
-            navigator.geolocation
-        ) {
-            navigator.geolocation.clearWatch(
-                this.watchId
-            );
-
-            this.watchId =
-                null;
-        }
-    }
-
-    static async searchDestination(
-        query
+    function findClosestRadar(
+        latitude,
+        longitude
     ) {
-        if (!query) {
-            return;
-        }
+        let closest = null;
 
-        const resultsElement =
-            document.getElementById(
-                "destinationResults"
-            );
-
-        if (!resultsElement) {
-            return;
-        }
-
-        resultsElement.innerHTML =
-            `<div class="destination-loading">BUSCANDO...</div>`;
-
-        try {
-            let url =
-                `${this.nominatimUrl}?format=jsonv2&addressdetails=1&limit=8&countrycodes=uy&q=${encodeURIComponent(
-                    query
-                )}`;
-
-            if (this.lastPosition) {
-                const lat =
-                    this.lastPosition.latitude;
-
-                const lon =
-                    this.lastPosition.longitude;
-
-                const delta = 0.15;
-
-                url +=
-                    `&viewbox=${encodeURIComponent(
-                        `${lon - delta},${lat + delta},${lon + delta},${lat - delta}`
-                    )}&bounded=0`;
-            }
-
-            const response =
-                await fetch(
-                    url,
-                    {
-                        headers: {
-                            Accept:
-                                "application/json"
-                        }
-                    }
-                );
-
-            if (!response.ok) {
-                throw new Error(
-                    `Nominatim HTTP ${response.status}`
-                );
-            }
-
-            const results =
-                await response.json();
-
-            resultsElement.innerHTML = "";
-
-            if (!results.length) {
-                resultsElement.innerHTML =
-                    `<div class="destination-empty">NO SE ENCONTRARON DESTINOS</div>`;
-
-                return;
-            }
-
-            for (
-                const result of results
+        for (
+            const radar of state.radars
             ) {
-                const item =
-                    document.createElement(
-                        "button"
-                    );
-
-                item.type = "button";
-                item.className =
-                    "destination-result";
-
-                item.dataset.lat =
-                    result.lat;
-
-                item.dataset.lon =
-                    result.lon;
-
-                item.innerHTML =
-                    `
-                    <strong>${this.escapeHtml(
-                        result.name ||
-                        result.display_name
-                    )}</strong>
-                    <small>${this.escapeHtml(
-                        result.display_name
-                    )}</small>
-                    `;
-
-                item.addEventListener(
-                    "click",
-                    () => {
-                        this.selectDestination(
-                            Number(result.lat),
-                            Number(result.lon),
-                            result.display_name
-                        );
-                    }
+            const distance =
+                distanceMeters(
+                    latitude,
+                    longitude,
+                    radar.latitude,
+                    radar.longitude
                 );
 
-                resultsElement.appendChild(
-                    item
-                );
+            if (
+                !closest ||
+                distance <
+                closest.distance
+            ) {
+                closest = {
+                    radar,
+                    distance
+                };
             }
-        } catch (error) {
-            console.error(
-                "Error buscando destino:",
-                error
-            );
-
-            resultsElement.innerHTML =
-                `<div class="destination-empty">ERROR BUSCANDO DESTINO</div>`;
         }
+
+        return closest;
     }
 
-    static clearSearchResults() {
-        const element =
-            document.getElementById(
-                "destinationResults"
-            );
+    /*
+     * ============================================================
+     * RUTAS
+     * ============================================================
+     */
 
-        if (element) {
-            element.innerHTML = "";
-        }
-    }
-
-    static async selectDestination(
+    async function calculateRouteToDestination(
         latitude,
         longitude,
-        name
+        silent = false
     ) {
-        this.clearSearchResults();
-
-        const input =
-            document.getElementById(
-                "destinationSearch"
-            );
-
-        if (input) {
-            input.value = name || "";
+        if (!state.map) {
+            return null;
         }
 
-        if (!this.lastPosition) {
-            this.showStatus(
-                "Esperando ubicación actual..."
-            );
+        const destination = {
+            latitude:
+                Number(latitude),
 
-            this.requestLocation(true);
+            longitude:
+                Number(longitude),
 
-            return;
+            name:
+                state.destination?.name ||
+                "DESTINO"
+        };
+
+        state.destination =
+            destination;
+
+        state.destinationLatitude =
+            destination.latitude;
+
+        state.destinationLongitude =
+            destination.longitude;
+
+        const origin =
+            getCurrentPositionForRoute();
+
+        if (!origin) {
+            if (!silent) {
+                showStatus(
+                    "ACTIVA EL GPS PARA CALCULAR LA RUTA"
+                );
+            }
+
+            return null;
         }
 
-        await this.calculateRoute(
-            this.lastPosition.latitude,
-            this.lastPosition.longitude,
-            latitude,
-            longitude,
-            name
+        setText(
+            "routeState",
+            "CALCULATING"
         );
-    }
 
-    static async calculateRoute(
-        startLatitude,
-        startLongitude,
-        destinationLatitude,
-        destinationLongitude,
-        destinationName
-    ) {
-        if (this.routeRequestInProgress) {
-            return;
+        if (!silent) {
+            showStatus(
+                "CALCULANDO RUTA..."
+            );
         }
 
-        this.routeRequestInProgress = true;
+        const coordinates =
+            `${origin.longitude},${origin.latitude};` +
+            `${destination.longitude},${destination.latitude}`;
 
-        this.showStatus(
-            "Calculando ruta por calles..."
-        );
+        const url =
+            `${CONFIG.services.osrm}/${coordinates}` +
+            "?overview=full" +
+            "&geometries=geojson" +
+            "&steps=true";
 
         try {
-            const coordinates =
-                `${startLongitude},${startLatitude};${destinationLongitude},${destinationLatitude}`;
-
-            const url =
-                `${this.osrmUrl}/${coordinates}?overview=full&geometries=geojson&steps=true&annotations=true`;
-
             const response =
                 await fetch(url);
 
@@ -1684,691 +1515,485 @@ class TrafficMap {
 
             if (
                 data.code !== "Ok" ||
-                !data.routes ||
-                !data.routes.length
+                !data.routes?.length
             ) {
                 throw new Error(
-                    "No se encontró una ruta."
+                    "Ruta no encontrada"
                 );
             }
 
             const route =
                 data.routes[0];
 
-            this.clearRouteLayer();
+            state.route =
+                route;
 
-            this.route = {
-                geometry:
-                    route.geometry,
+            renderDestination(
+                destination
+            );
+
+            renderRoute(
+                route
+            );
+
+            updateRouteUI(
+                route
+            );
+
+            /*
+             * Mostramos solamente radares
+             * razonablemente próximos a la geometría.
+             */
+            renderRouteRadars(
+                route
+            );
+
+            setText(
+                "routeState",
+                "ACTIVE"
+            );
+
+            showStatus(
+                "RUTA ACTIVA"
+            );
+
+            return {
                 distance:
-                    route.distance,
+                route.distance,
+
                 duration:
-                    route.duration,
-                steps:
-                    route.legs?.flatMap(
-                        leg =>
-                            leg.steps || []
-                    ) || [],
-                destination: {
-                    latitude:
-                        destinationLatitude,
-                    longitude:
-                        destinationLongitude,
-                    name:
-                        destinationName ||
-                        "Destino"
-                }
+                route.duration,
+
+                instructions:
+                    extractInstructions(
+                        route
+                    ),
+
+                geometry:
+                route.geometry
             };
 
-            this.routeProgress = 0;
-            this.routeLastPosition = null;
-
-            this.routeLayer =
-                L.geoJSON(
-                    route.geometry,
-                    {
-                        style: {
-                            color: "#22a7ff",
-                            weight: 7,
-                            opacity: 0.9
-                        }
-                    }
-                ).addTo(this.map);
-
-            this.routeDestinationMarker =
-                L.marker(
-                    [
-                        destinationLatitude,
-                        destinationLongitude
-                    ],
-                    {
-                        title:
-                            destinationName ||
-                            "Destino"
-                    }
-                ).addTo(this.map);
-
-            this.routeDestinationMarker.bindPopup(
-                `<strong>DESTINO</strong><br>${this.escapeHtml(
-                    destinationName ||
-                    "Destino"
-                )}`
-            );
-
-            this.map.fitBounds(
-                this.routeLayer.getBounds(),
-                {
-                    padding: [
-                        50,
-                        50
-                    ]
-                }
-            );
-
-            this.routeRadars =
-                this.findRadarsOnRoute(
-                    this.route.geometry
-                );
-
-            this.renderRouteRadars();
-
-            this.updateRouteInfo();
-
-            this.showStatus(
-                `Ruta calculada · ${this.formatDistance(
-                    route.distance
-                )} · ${this.formatDuration(
-                    route.duration
-                )}`
-            );
-
-            if (this.lastPosition) {
-                this.updateRouteProgress(
-                    this.lastPosition.latitude,
-                    this.lastPosition.longitude
-                );
-            }
         } catch (error) {
             console.error(
-                "Error calculando ruta:",
+                "[Keolel Radar] Route:",
                 error
             );
 
-            this.showStatus(
-                "No se pudo calcular una ruta por calles."
+            setText(
+                "routeState",
+                "ERROR"
             );
 
-            this.clearRoute();
-        } finally {
-            this.routeRequestInProgress =
-                false;
+            showStatus(
+                "ERROR CALCULANDO RUTA"
+            );
+
+            return null;
         }
     }
 
-    static findRadarsOnRoute(
-        geometry
-    ) {
+    function getCurrentPositionForRoute() {
         if (
-            !geometry?.coordinates ||
-            geometry.coordinates.length < 2
+            state.simulation.active &&
+            Number.isFinite(
+                state.simulation.latitude
+            ) &&
+            Number.isFinite(
+                state.simulation.longitude
+            )
         ) {
-            return [];
+            return {
+                latitude:
+                state.simulation.latitude,
+
+                longitude:
+                state.simulation.longitude
+            };
         }
 
-        const result = [];
-
-        for (
-            const radar of this.allRadars
+        if (
+            state.lastPosition
         ) {
-            const match =
-                this.closestPointOnRoute(
+            return {
+                latitude:
+                state.lastPosition.latitude,
+
+                longitude:
+                state.lastPosition.longitude
+            };
+        }
+
+        return null;
+    }
+
+    function renderDestination(
+        destination
+    ) {
+        if (!state.map) {
+            return;
+        }
+
+        if (
+            state.destinationMarker
+        ) {
+            state.destinationMarker.remove();
+        }
+
+        state.destinationMarker =
+            L.marker(
+                [
+                    destination.latitude,
+                    destination.longitude
+                ],
+                {
+                    zIndexOffset: 900
+                }
+            )
+                .addTo(state.map)
+                .bindPopup(
+                    `<strong>${escapeHtml(
+                        destination.name
+                    )}</strong>`
+                );
+
+        state.destinationMarker.openPopup();
+    }
+
+    function renderRoute(
+        route
+    ) {
+        if (
+            !state.map ||
+            !route?.geometry
+        ) {
+            return;
+        }
+
+        if (
+            state.routeLine
+        ) {
+            state.routeLine.remove();
+        }
+
+        state.routeLine =
+            L.geoJSON(
+                route.geometry,
+                {
+                    style: {
+                        color:
+                            "#36c8d8",
+
+                        weight: 5,
+
+                        opacity: .8,
+
+                        lineCap:
+                            "round",
+
+                        lineJoin:
+                            "round"
+                    }
+                }
+            ).addTo(state.map);
+
+        const bounds =
+            state.routeLine.getBounds();
+
+        if (bounds.isValid()) {
+            state.map.fitBounds(
+                bounds,
+                {
+                    padding:
+                        [70, 70]
+                }
+            );
+        }
+    }
+
+    function updateRouteUI(
+        route
+    ) {
+        setText(
+            "routeDistance",
+            formatDistance(
+                route.distance
+            )
+        );
+
+        setText(
+            "routeEta",
+            formatDuration(
+                route.duration
+            )
+        );
+
+        const instructions =
+            extractInstructions(
+                route
+            );
+
+        renderInstructions(
+            instructions
+        );
+
+        const panel =
+            byId("routePanel");
+
+        if (panel) {
+            panel.classList.add(
+                "active"
+            );
+        }
+
+        const summary =
+            byId("routeSummary");
+
+        if (summary) {
+            summary.textContent =
+                `${formatDistance(
+                    route.distance
+                )} · ${formatDuration(
+                    route.duration
+                )}`;
+        }
+    }
+
+    function extractInstructions(
+        route
+    ) {
+        const instructions = [];
+
+        const legs =
+            route?.legs || [];
+
+        legs.forEach(
+            leg => {
+                (
+                    leg.steps || []
+                ).forEach(
+                    step => {
+                        const maneuver =
+                            step.maneuver ||
+                            {};
+
+                        const name =
+                            step.name ||
+                            "";
+
+                        let text =
+                            "";
+
+                        if (
+                            maneuver.type ===
+                            "depart"
+                        ) {
+                            text =
+                                `SALIDA · ${name}`;
+                        } else if (
+                            maneuver.type ===
+                            "arrive"
+                        ) {
+                            text =
+                                "LLEGADA AL DESTINO";
+                        } else {
+                            const modifier =
+                                maneuver.modifier
+                                    ? ` · ${maneuver.modifier}`
+                                    : "";
+
+                            text =
+                                `${maneuver.type || "MANIOBRA"}${modifier}` +
+                                `${name ? ` · ${name}` : ""}`;
+                        }
+
+                        if (text.trim()) {
+                            instructions.push(
+                                text
+                            );
+                        }
+                    }
+                );
+            }
+        );
+
+        return instructions;
+    }
+
+    function renderInstructions(
+        instructions
+    ) {
+        const container =
+            byId(
+                "routeInstructions"
+            );
+
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "";
+
+        instructions.forEach(
+            instruction => {
+                const element =
+                    document.createElement(
+                        "div"
+                    );
+
+                element.className =
+                    "route-instruction";
+
+                element.textContent =
+                    instruction;
+
+                container.appendChild(
+                    element
+                );
+            }
+        );
+    }
+
+    function renderRouteRadars(
+        route
+    ) {
+        if (
+            !state.routeRadarLayer ||
+            !route?.geometry?.coordinates
+        ) {
+            return;
+        }
+
+        state.routeRadarLayer.clearLayers();
+
+        const coordinates =
+            route.geometry.coordinates;
+
+        const routeRadars =
+            state.radars.filter(
+                radar =>
+                    isRadarNearRoute(
+                        radar,
+                        coordinates,
+                        100
+                    )
+            );
+
+        routeRadars.forEach(
+            radar => {
+                const marker =
+                    L.marker(
+                        [
+                            radar.latitude,
+                            radar.longitude
+                        ],
+                        {
+                            icon:
+                                createRadarIcon(
+                                    radar.limit
+                                )
+                        }
+                    );
+
+                marker.bindPopup(
+                    `<strong>RADAR EN RUTA</strong><br>` +
+                    `${
+                        radar.limit
+                            ? `LÍMITE ${radar.limit} KM/H`
+                            : "LÍMITE NO DISPONIBLE"
+                    }`
+                );
+
+                marker.addTo(
+                    state.routeRadarLayer
+                );
+            }
+        );
+    }
+
+    function isRadarNearRoute(
+        radar,
+        coordinates,
+        maxDistance
+    ) {
+        for (
+            const coordinate of coordinates
+            ) {
+            if (
+                !Array.isArray(
+                    coordinate
+                )
+            ) {
+                continue;
+            }
+
+            const longitude =
+                Number(
+                    coordinate[0]
+                );
+
+            const latitude =
+                Number(
+                    coordinate[1]
+                );
+
+            if (
+                distanceMeters(
                     radar.latitude,
                     radar.longitude,
-                    geometry.coordinates
-                );
-
-            if (
-                match.distance <=
-                this.routeRadarMatchDistance
-            ) {
-                result.push({
-                    radar,
-                    routeDistance:
-                        match.routeDistance,
-                    distanceFromRoute:
-                        match.distance
-                });
-            }
-        }
-
-        result.sort(
-            (
-                a,
-                b
-            ) =>
-                a.routeDistance -
-                b.routeDistance
-        );
-
-        return result;
-    }
-
-    static renderRouteRadars() {
-        if (!this.route) {
-            return;
-        }
-
-        this.clearRadarMarkers();
-
-        for (
-            const item of this.routeRadars
-        ) {
-            this.createRadarMarker(
-                item.radar
-            );
-        }
-    }
-
-    static updateRouteProgress(
-        latitude,
-        longitude
-    ) {
-        if (
-            !this.route?.geometry?.coordinates
-        ) {
-            return;
-        }
-
-        const nearest =
-            this.closestPointOnRoute(
-                latitude,
-                longitude,
-                this.route.geometry.coordinates
-            );
-
-        this.routeProgress =
-            nearest.routeDistance;
-
-        this.routeLastPosition = {
-            latitude,
-            longitude
-        };
-
-        this.updateRouteInfo();
-
-        this.checkRouteRadars(
-            latitude,
-            longitude
-        );
-    }
-
-    static checkRouteRadars(
-        latitude,
-        longitude
-    ) {
-        if (
-            !this.route ||
-            !this.routeRadars.length
-        ) {
-            return;
-        }
-
-        for (
-            const item of this.routeRadars
-        ) {
-            const radar =
-                item.radar;
-
-            if (
-                this.warnedRadars.has(
-                    radar.id
-                )
-            ) {
-                continue;
-            }
-
-            const routeAhead =
-                item.routeDistance -
-                this.routeProgress;
-
-            if (
-                routeAhead < -30
-            ) {
-                continue;
-            }
-
-            if (
-                routeAhead > this.warningDistance
-            ) {
-                continue;
-            }
-
-            const directDistance =
-                this.distanceMeters(
                     latitude,
-                    longitude,
-                    radar.latitude,
-                    radar.longitude
-                );
-
-            if (
-                directDistance >
-                this.warningDistance + 60
+                    longitude
+                ) <= maxDistance
             ) {
-                continue;
+                return true;
             }
-
-            this.warnedRadars.add(
-                radar.id
-            );
-
-            this.warnRadar(
-                radar,
-                Math.max(
-                    1,
-                    Math.round(
-                        directDistance
-                    )
-                )
-            );
         }
 
-        this.cleanupWarnings(
-            latitude,
-            longitude
-        );
+        return false;
     }
 
-    static closestPointOnRoute(
-        latitude,
-        longitude,
-        coordinates
-    ) {
-        let bestDistance =
-            Infinity;
-
-        let bestRouteDistance =
-            0;
-
-        let accumulated =
-            0;
-
-        let bestPoint = null;
-
-        for (
-            let i = 0;
-            i < coordinates.length - 1;
-            i++
-        ) {
-            const a =
-                coordinates[i];
-
-            const b =
-                coordinates[i + 1];
-
-            const segmentDistance =
-                this.distanceMeters(
-                    a[1],
-                    a[0],
-                    b[1],
-                    b[0]
-                );
-
-            if (
-                segmentDistance <= 0
-            ) {
-                continue;
-            }
-
-            const projection =
-                this.projectOnSegment(
-                    latitude,
-                    longitude,
-                    a[1],
-                    a[0],
-                    b[1],
-                    b[0]
-                );
-
-            const distance =
-                this.distanceMeters(
-                    latitude,
-                    longitude,
-                    projection.latitude,
-                    projection.longitude
-                );
-
-            const routeDistance =
-                accumulated +
-                segmentDistance *
-                projection.t;
-
-            if (
-                distance <
-                bestDistance
-            ) {
-                bestDistance =
-                    distance;
-
-                bestRouteDistance =
-                    routeDistance;
-
-                bestPoint =
-                    projection;
-            }
-
-            accumulated +=
-                segmentDistance;
-        }
-
-        return {
-            distance:
-                bestDistance,
-            routeDistance:
-                bestRouteDistance,
-            point:
-                bestPoint
-        };
-    }
-
-    static projectOnSegment(
-        pointLat,
-        pointLon,
-        aLat,
-        aLon,
-        bLat,
-        bLon
-    ) {
-        const cosLat =
-            Math.cos(
-                pointLat *
-                Math.PI /
-                180
-            );
-
-        const metersPerDegreeLat =
-            111320;
-
-        const metersPerDegreeLon =
-            111320 *
-            Math.max(
-                0.01,
-                cosLat
-            );
-
-        const ax =
-            aLon *
-            metersPerDegreeLon;
-
-        const ay =
-            aLat *
-            metersPerDegreeLat;
-
-        const bx =
-            bLon *
-            metersPerDegreeLon;
-
-        const by =
-            bLat *
-            metersPerDegreeLat;
-
-        const px =
-            pointLon *
-            metersPerDegreeLon;
-
-        const py =
-            pointLat *
-            metersPerDegreeLat;
-
-        const dx =
-            bx - ax;
-
-        const dy =
-            by - ay;
-
-        const lengthSquared =
-            dx * dx +
-            dy * dy;
-
-        let t = 0;
-
-        if (
-            lengthSquared > 0
-        ) {
-            t =
-                (
-                    (px - ax) * dx +
-                    (py - ay) * dy
-                ) /
-                lengthSquared;
-        }
-
-        t =
-            Math.max(
-                0,
-                Math.min(
-                    1,
-                    t
-                )
-            );
-
-        return {
-            latitude:
-                aLat +
-                (
-                    bLat -
-                    aLat
-                ) *
-                t,
-
-            longitude:
-                aLon +
-                (
-                    bLon -
-                    aLon
-                ) *
-                t,
-
-            t
-        };
-    }
-
-    static updateRouteInfo() {
-        const destinationElement =
-            document.getElementById(
-                "routeDestinationText"
-            );
-
-        const distanceElement =
-            document.getElementById(
-                "routeDistanceText"
-            );
-
-        const instructionElement =
-            document.getElementById(
-                "routeInstructionText"
-            );
-
-        if (!this.route) {
-            if (destinationElement) {
-                destinationElement.textContent =
-                    "SIN DESTINO";
-            }
-
-            if (distanceElement) {
-                distanceElement.textContent =
-                    "—";
-            }
-
-            if (instructionElement) {
-                instructionElement.textContent =
-                    "—";
-            }
-
-            return;
-        }
-
-        if (destinationElement) {
-            destinationElement.textContent =
-                this.route.destination.name;
-        }
-
-        const remaining =
-            Math.max(
-                0,
-                this.route.distance -
-                this.routeProgress
-            );
-
-        if (distanceElement) {
-            distanceElement.textContent =
-                `${this.formatDistance(
-                    remaining
-                )} restantes`;
-        }
-
-        if (instructionElement) {
-            const instruction =
-                this.getCurrentRouteInstruction();
-
-            instructionElement.textContent =
-                instruction ||
-                "Continúe por la ruta";
-        }
-    }
-
-    static getCurrentRouteInstruction() {
-        if (
-            !this.route?.steps?.length
-        ) {
-            return "";
-        }
-
-        let accumulated = 0;
-
-        for (
-            const step of this.route.steps
-        ) {
-            const distance =
-                Number(
-                    step.distance || 0
-                );
-
-            if (
-                this.routeProgress <=
-                accumulated +
-                distance +
-                20
-            ) {
-                return (
-                    step.maneuver?.instruction ||
-                    this.translateManeuver(
-                        step.maneuver,
-                        step.name
-                    )
-                );
-            }
-
-            accumulated +=
-                distance;
-        }
-
-        return "Ha llegado a su destino";
-    }
-
-    static translateManeuver(
-        maneuver,
-        streetName
-    ) {
-        const modifier =
-            maneuver?.modifier || "";
-
-        const name =
-            streetName ||
-            "la calle";
-
-        if (
-            maneuver?.type ===
-            "arrive"
-        ) {
-            return "Ha llegado a su destino";
-        }
-
-        if (
-            maneuver?.type ===
-            "depart"
-        ) {
-            return `Continúe por ${name}`;
-        }
-
-        if (
-            modifier === "left"
-        ) {
-            return `Doble a la izquierda hacia ${name}`;
-        }
-
-        if (
-            modifier === "right"
-        ) {
-            return `Doble a la derecha hacia ${name}`;
-        }
-
-        if (
-            modifier === "slight left"
-        ) {
-            return `Gire levemente a la izquierda hacia ${name}`;
-        }
-
-        if (
-            modifier === "slight right"
-        ) {
-            return `Gire levemente a la derecha hacia ${name}`;
-        }
-
-        if (
-            modifier === "sharp left"
-        ) {
-            return `Gire pronunciadamente a la izquierda hacia ${name}`;
-        }
-
-        if (
-            modifier === "sharp right"
-        ) {
-            return `Gire pronunciadamente a la derecha hacia ${name}`;
-        }
-
-        return `Continúe por ${name}`;
-    }
-
-    static formatDistance(
+    function formatDistance(
         meters
     ) {
+        const value =
+            Number(meters);
+
         if (
-            meters < 1000
+            !Number.isFinite(value)
         ) {
-            return `${Math.round(
-                meters
-            )} m`;
+            return "--";
         }
 
-        return `${(
-            meters /
-            1000
-        ).toFixed(1)} km`;
+        if (value < 1000) {
+            return `${Math.round(value)} M`;
+        }
+
+        return (
+            (value / 1000)
+                .toFixed(1)
+                .replace(".0", "") +
+            " KM"
+        );
     }
 
-    static formatDuration(
+    function formatDuration(
         seconds
     ) {
-        const minutes =
-            Math.round(
-                seconds / 60
-            );
+        const value =
+            Number(seconds);
 
         if (
-            minutes < 60
+            !Number.isFinite(value)
         ) {
-            return `${minutes} min`;
+            return "--";
+        }
+
+        const minutes =
+            Math.round(
+                value / 60
+            );
+
+        if (minutes < 60) {
+            return `${minutes} MIN`;
         }
 
         const hours =
@@ -2377,1817 +2002,304 @@ class TrafficMap {
             );
 
         const remaining =
-            minutes %
-            60;
+            minutes % 60;
 
-        return `${hours} h ${remaining} min`;
+        if (!remaining) {
+            return `${hours} H`;
+        }
+
+        return `${hours} H ${remaining} MIN`;
     }
 
-    static clearRouteLayer() {
-        if (
-            this.routeLayer &&
-            this.map
-        ) {
-            this.map.removeLayer(
-                this.routeLayer
-            );
-        }
+    /*
+     * ============================================================
+     * UI
+     * ============================================================
+     */
 
-        if (
-            this.routeDestinationMarker &&
-            this.map
-        ) {
-            this.map.removeLayer(
-                this.routeDestinationMarker
-            );
-        }
+    function updateGpsUI(active) {
+        const value =
+            active
+                ? "ON"
+                : "OFF";
 
-        this.routeLayer = null;
-        this.routeDestinationMarker = null;
-    }
-
-    static clearRoute() {
-        this.clearRouteLayer();
-
-        this.route = null;
-        this.routeRadars = [];
-        this.routeProgress = 0;
-        this.routeLastPosition = null;
-
-        this.warnedRadars.clear();
-
-        if (this.lastPosition) {
-            this.renderNearbyRadars(
-                this.lastPosition.latitude,
-                this.lastPosition.longitude
-            );
-        }
-
-        this.updateRouteInfo();
-
-        this.showStatus(
-            "Ruta eliminada."
+        setText(
+            "gpsStateHeader",
+            value
         );
-    }
 
-    static async loadMontevideoRadars() {
-        try {
-            this.showStatus(
-                "Cargando radares oficiales..."
-            );
+        setText(
+            "gpsStateSidebar",
+            value
+        );
 
-            const response =
-                await fetch(
-                    this.radarDataUrl,
-                    {
-                        cache: "no-store"
-                    }
-                );
+        setText(
+            "gpsStateBottom",
+            value
+        );
 
-            if (!response.ok) {
-                throw new Error(
-                    `HTTP ${response.status}`
-                );
-            }
-
-            const csv =
-                await response.text();
-
-            const radars =
-                this.parseRadarCSV(csv);
-
-            this.allRadars =
-                this.deduplicateRadars(
-                    [
-                        ...this.allRadars,
-                        ...radars
-                    ]
-                );
-
-            this.radars =
-                this.allRadars;
-
-            this.updateRadarCount();
-
-            if (this.lastPosition) {
-                if (this.route) {
-                    this.routeRadars =
-                        this.findRadarsOnRoute(
-                            this.route.geometry
-                        );
-
-                    this.renderRouteRadars();
-                } else {
-                    this.renderNearbyRadars(
-                        this.lastPosition.latitude,
-                        this.lastPosition.longitude
-                    );
-                }
-            }
-
-            this.showStatus(
-                `${this.allRadars.length} radares oficiales cargados`
-            );
-
-            this.setSystemStatus(
+        if (active) {
+            setText(
+                "systemStatus",
                 "SYSTEM ONLINE"
             );
-        } catch (error) {
-            console.error(
-                "Error cargando radares de Montevideo:",
-                error
-            );
 
-            this.showStatus(
-                "No se pudieron cargar los radares oficiales."
+            setText(
+                "systemStatusBottom",
+                "ACTIVE"
             );
         }
     }
 
-    static async updateRadarArea(
-        latitude,
-        longitude
-    ) {
-        if (
-            this.testMode.active ||
-            this.radarLoadInProgress
-        ) {
-            return;
-        }
-
-        if (this.lastRadarZoneLoadPosition) {
-            const moved =
-                this.distanceMeters(
-                    this.lastRadarZoneLoadPosition.latitude,
-                    this.lastRadarZoneLoadPosition.longitude,
-                    latitude,
-                    longitude
-                );
-
-            if (
-                moved <
-                this.reloadDistance
-            ) {
-                return;
-            }
-        }
-
-        const alreadyCovered =
-            this.loadedRadarZones.some(
-                zone =>
-                    this.distanceMeters(
-                        latitude,
-                        longitude,
-                        zone.latitude,
-                        zone.longitude
-                    ) <=
-                    this.radarLoadRadius *
-                    0.65
+    function updateRadarCountUI() {
+        const value =
+            formatRadarCount(
+                state.radarCount
             );
 
-        if (alreadyCovered) {
-            return;
-        }
-
-        this.radarLoadInProgress =
-            true;
-
-        try {
-            const radars =
-                await this.loadUruguayOSMRadars(
-                    latitude,
-                    longitude
-                );
-
-            if (radars.length) {
-                this.allRadars =
-                    this.deduplicateRadars(
-                        [
-                            ...this.allRadars,
-                            ...radars
-                        ]
-                    );
-
-                this.radars =
-                    this.allRadars;
-            }
-
-            this.loadedRadarZones.push({
-                latitude,
-                longitude
-            });
-
-            this.lastRadarZoneLoadPosition = {
-                latitude,
-                longitude
-            };
-
-            if (
-                this.loadedRadarZones.length >
-                30
-            ) {
-                this.loadedRadarZones =
-                    this.loadedRadarZones.slice(
-                        -20
-                    );
-            }
-
-            if (this.route) {
-                this.routeRadars =
-                    this.findRadarsOnRoute(
-                        this.route.geometry
-                    );
-
-                this.renderRouteRadars();
-            } else {
-                this.renderNearbyRadars(
-                    latitude,
-                    longitude
-                );
-            }
-
-            this.updateRadarCount();
-        } catch (error) {
-            console.error(
-                "Error actualizando zona de radares:",
-                error
-            );
-        } finally {
-            this.radarLoadInProgress =
-                false;
-        }
-    }
-
-    static async loadUruguayOSMRadars(
-        latitude,
-        longitude
-    ) {
-        const box =
-            this.createBoundingBox(
-                latitude,
-                longitude,
-                this.radarLoadRadius
-            );
-
-        const query = `
-[out:json][timeout:25];
-
-(
-    node["highway"="speed_camera"](${box});
-    node["enforcement"="maxspeed"](${box});
-    node["traffic_calming"="camera"](${box});
-    way["highway"="speed_camera"](${box});
-);
-
-out center tags;
-`;
-
-        for (
-            const url of this.overpassUrls
-        ) {
-            try {
-                const response =
-                    await fetch(
-                        url,
-                        {
-                            method: "POST",
-                            headers: {
-                                "Content-Type":
-                                    "application/x-www-form-urlencoded"
-                            },
-                            body:
-                                "data=" +
-                                encodeURIComponent(
-                                    query
-                                )
-                        }
-                    );
-
-                if (!response.ok) {
-                    continue;
-                }
-
-                const data =
-                    await response.json();
-
-                return (
-                    data.elements || []
-                )
-                    .map(
-                        element => {
-                            const elementLatitude =
-                                element.lat ??
-                                element.center?.lat;
-
-                            const elementLongitude =
-                                element.lon ??
-                                element.center?.lon;
-
-                            if (
-                                !Number.isFinite(
-                                    elementLatitude
-                                ) ||
-                                !Number.isFinite(
-                                    elementLongitude
-                                )
-                            ) {
-                                return null;
-                            }
-
-                            const tags =
-                                element.tags || {};
-
-                            return {
-                                id:
-                                    `osm-${element.type}-${element.id}`,
-
-                                latitude:
-                                    elementLatitude,
-
-                                longitude:
-                                    elementLongitude,
-
-                                tags: {
-                                    ...tags,
-                                    source:
-                                        "OpenStreetMap",
-                                    official:
-                                        "false",
-                                    osmId:
-                                        String(
-                                            element.id
-                                        )
-                                }
-                            };
-                        }
-                    )
-                    .filter(Boolean);
-            } catch (error) {
-                console.error(
-                    "Overpass:",
-                    error
-                );
-            }
-        }
-
-        return [];
-    }
-
-    static createBoundingBox(
-        latitude,
-        longitude,
-        radius
-    ) {
-        const latitudeDelta =
-            radius / 111320;
-
-        const longitudeDelta =
-            radius /
-            (
-                111320 *
-                Math.cos(
-                    latitude *
-                    Math.PI /
-                    180
-                )
-            );
-
-        return [
-            latitude -
-                latitudeDelta,
-            longitude -
-                longitudeDelta,
-            latitude +
-                latitudeDelta,
-            longitude +
-                longitudeDelta
-        ].join(",");
-    }
-
-    static renderNearbyRadars(
-        latitude,
-        longitude
-    ) {
-        const nearby =
-            this.allRadars.filter(
-                radar =>
-                    this.distanceMeters(
-                        latitude,
-                        longitude,
-                        radar.latitude,
-                        radar.longitude
-                    ) <=
-                    this.radarDisplayRadius
-            );
-
-        this.clearRadarMarkers();
-
-        for (
-            const radar of nearby
-        ) {
-            this.createRadarMarker(
-                radar
-            );
-        }
-    }
-
-    static parseRadarCSV(
-        csv
-    ) {
-        const lines =
-            csv
-                .replace(
-                    /^\uFEFF/,
-                    ""
-                )
-                .split(/\r?\n/)
-                .filter(
-                    line =>
-                        line.trim()
-                );
-
-        if (
-            lines.length < 2
-        ) {
-            return [];
-        }
-
-        const delimiter =
-            this.detectDelimiter(
-                lines[0]
-            );
-
-        const headers =
-            this.parseCSVLine(
-                lines[0],
-                delimiter
-            ).map(
-                value =>
-                    this.normalizeText(
-                        value
-                    )
-            );
-
-        const latitudeIndex =
-            this.findColumn(
-                headers,
-                [
-                    "latitud",
-                    "latitude",
-                    "lat",
-                    "y"
-                ]
-            );
-
-        const longitudeIndex =
-            this.findColumn(
-                headers,
-                [
-                    "longitud",
-                    "longitude",
-                    "lon",
-                    "lng",
-                    "x"
-                ]
-            );
-
-        if (
-            latitudeIndex === -1 ||
-            longitudeIndex === -1
-        ) {
-            return [];
-        }
-
-        const result = [];
-
-        for (
-            let i = 1;
-            i < lines.length;
-            i++
-        ) {
-            const values =
-                this.parseCSVLine(
-                    lines[i],
-                    delimiter
-                );
-
-            const latitude =
-                this.parseCoordinate(
-                    values[latitudeIndex]
-                );
-
-            const longitude =
-                this.parseCoordinate(
-                    values[longitudeIndex]
-                );
-
-            if (
-                !Number.isFinite(
-                    latitude
-                ) ||
-                !Number.isFinite(
-                    longitude
-                )
-            ) {
-                continue;
-            }
-
-            if (
-                Math.abs(latitude) > 90 ||
-                Math.abs(longitude) > 180
-            ) {
-                continue;
-            }
-
-            const tags = {};
-
-            headers.forEach(
-                (
-                    header,
-                    index
-                ) => {
-                    if (
-                        values[index] !==
-                        undefined
-                    ) {
-                        tags[header] =
-                            String(
-                                values[index]
-                            )
-                                .trim()
-                                .replace(
-                                    /^"(.*)"$/,
-                                    "$1"
-                                );
-                    }
-                }
-            );
-
-            const speed =
-                this.findTagValue(
-                    tags,
-                    [
-                        "velocidad",
-                        "velocidad maxima",
-                        "maxspeed",
-                        "limite",
-                        "limite velocidad"
-                    ]
-                );
-
-            const direction =
-                this.findTagValue(
-                    tags,
-                    [
-                        "direccion",
-                        "dirección",
-                        "sentido"
-                    ]
-                );
-
-            result.push({
-                id:
-                    `int-mvd-${i}-${latitude}-${longitude}`,
-
-                latitude,
-                longitude,
-
-                tags: {
-                    ...tags,
-                    maxspeed:
-                        speed || "",
-                    direction:
-                        direction || "",
-                    official:
-                        "true",
-                    source:
-                        "Intendencia de Montevideo"
-                }
-            });
-        }
-
-        return result;
-    }
-
-    static normalizeText(
-        value
-    ) {
-        return String(
-            value ?? ""
-        )
-            .trim()
-            .toLowerCase()
-            .normalize("NFD")
-            .replace(
-                /[\u0300-\u036f]/g,
-                ""
-            )
-            .replace(
-                /["']/g,
-                ""
-            );
-    }
-
-    static detectDelimiter(
-        line
-    ) {
-        const semicolon =
-            (
-                line.match(
-                    /;/g
-                ) || []
-            ).length;
-
-        const comma =
-            (
-                line.match(
-                    /,/g
-                ) || []
-            ).length;
-
-        const tab =
-            (
-                line.match(
-                    /\t/g
-                ) || []
-            ).length;
-
-        if (
-            semicolon >= comma &&
-            semicolon >= tab
-        ) {
-            return ";";
-        }
-
-        if (
-            tab >= comma
-        ) {
-            return "\t";
-        }
-
-        return ",";
-    }
-
-    static parseCSVLine(
-        line,
-        delimiter
-    ) {
-        const values = [];
-
-        let current = "";
-        let insideQuotes = false;
-
-        for (
-            let i = 0;
-            i < line.length;
-            i++
-        ) {
-            const char =
-                line[i];
-
-            if (
-                char === '"'
-            ) {
-                if (
-                    insideQuotes &&
-                    line[i + 1] === '"'
-                ) {
-                    current += '"';
-                    i++;
-                } else {
-                    insideQuotes =
-                        !insideQuotes;
-                }
-
-                continue;
-            }
-
-            if (
-                char === delimiter &&
-                !insideQuotes
-            ) {
-                values.push(
-                    current
-                );
-
-                current = "";
-
-                continue;
-            }
-
-            current += char;
-        }
-
-        values.push(
-            current
+        setText(
+            "radarCountHeader",
+            value
         );
 
-        return values;
-    }
-
-    static findColumn(
-        headers,
-        possibleNames
-    ) {
-        for (
-            const name of possibleNames
-        ) {
-            const index =
-                headers.indexOf(
-                    this.normalizeText(
-                        name
-                    )
-                );
-
-            if (
-                index !== -1
-            ) {
-                return index;
-            }
-        }
-
-        for (
-            let i = 0;
-            i < headers.length;
-            i++
-        ) {
-            for (
-                const name of possibleNames
-            ) {
-                if (
-                    headers[i].includes(
-                        this.normalizeText(
-                            name
-                        )
-                    )
-                ) {
-                    return i;
-                }
-            }
-        }
-
-        return -1;
-    }
-
-    static findTagValue(
-        tags,
-        possibleNames
-    ) {
-        for (
-            const name of possibleNames
-        ) {
-            const normalized =
-                this.normalizeText(
-                    name
-                );
-
-            for (
-                const key of Object.keys(
-                    tags
-                )
-            ) {
-                if (
-                    this.normalizeText(
-                        key
-                    ) === normalized
-                ) {
-                    const value =
-                        String(
-                            tags[key] ??
-                            ""
-                        ).trim();
-
-                    if (value) {
-                        return value;
-                    }
-                }
-            }
-        }
-
-        return "";
-    }
-
-    static parseCoordinate(
-        value
-    ) {
-        if (
-            value === undefined ||
-            value === null
-        ) {
-            return NaN;
-        }
-
-        let text =
-            String(value)
-                .trim()
-                .replace(
-                    /^"(.*)"$/,
-                    "$1"
-                );
-
-        if (!text) {
-            return NaN;
-        }
-
-        text =
-            text.replace(
-                /[^\d,.\-+]/g,
-                ""
-            );
-
-        const commaCount =
-            (
-                text.match(
-                    /,/g
-                ) || []
-            ).length;
-
-        const dotCount =
-            (
-                text.match(
-                    /\./g
-                ) || []
-            ).length;
-
-        if (
-            commaCount > 0 &&
-            dotCount === 0
-        ) {
-            text =
-                text.replace(
-                    ",",
-                    "."
-                );
-        }
-
-        return Number(text);
-    }
-
-    static deduplicateRadars(
-        radars
-    ) {
-        const result = [];
-
-        for (
-            const radar of radars
-        ) {
-            if (
-                !Number.isFinite(
-                    radar.latitude
-                ) ||
-                !Number.isFinite(
-                    radar.longitude
-                )
-            ) {
-                continue;
-            }
-
-            const duplicate =
-                result.find(
-                    existing =>
-                        this.distanceMeters(
-                            existing.latitude,
-                            existing.longitude,
-                            radar.latitude,
-                            radar.longitude
-                        ) < 20
-                );
-
-            if (!duplicate) {
-                result.push(
-                    radar
-                );
-
-                continue;
-            }
-
-            if (
-                radar.tags?.official ===
-                    "true" &&
-                duplicate.tags?.official !==
-                    "true"
-            ) {
-                const index =
-                    result.indexOf(
-                        duplicate
-                    );
-
-                result[index] =
-                    radar;
-            }
-        }
-
-        return result;
-    }
-
-    static createRadarMarker(
-        radar
-    ) {
-        if (!this.map) {
-            return;
-        }
-
-        const official =
-            radar.tags?.official ===
-            "true";
-
-        const icon =
-            L.divIcon({
-                className:
-                    "radar-map-icon",
-
-                html:
-                    `
-                    <div style="
-                        width:32px;
-                        height:32px;
-                        border-radius:50%;
-                        background:${
-                            official
-                                ? "#e53935"
-                                : "#ff7a00"
-                        };
-                        border:3px solid white;
-                        display:flex;
-                        align-items:center;
-                        justify-content:center;
-                        box-shadow:0 2px 8px rgba(0,0,0,.45);
-                        font-size:16px;
-                    ">📷</div>
-                    `,
-
-                iconSize: [
-                    32,
-                    32
-                ],
-
-                iconAnchor: [
-                    16,
-                    16
-                ]
-            });
-
-        const marker =
-            L.marker(
-                [
-                    radar.latitude,
-                    radar.longitude
-                ],
-                {
-                    icon
-                }
-            ).addTo(
-                this.map
-            );
-
-        const speed =
-            radar.tags?.maxspeed;
-
-        const source =
-            radar.tags?.source ||
-            "OpenStreetMap";
-
-        const direction =
-            radar.tags?.direction ||
-            radar.tags?.camera_direction ||
-            radar.tags?.direction_deg ||
-            "";
-
-        let popup =
-            "<strong>🚨 RADAR</strong>";
-
-        popup +=
-            `<br>Fuente: ${this.escapeHtml(
-                source
-            )}`;
-
-        if (speed) {
-            popup +=
-                `<br>Velocidad: ${this.escapeHtml(
-                    speed
-                )}`;
-        }
-
-        if (direction) {
-            popup +=
-                `<br>Dirección: ${this.escapeHtml(
-                    direction
-                )}`;
-        }
-
-        marker.bindPopup(
-            popup
+        setText(
+            "radarCountSidebar",
+            value
         );
 
-        this.radarMarkers.push(
-            marker
+        setText(
+            "radarCountBottom",
+            value
         );
     }
 
-    static escapeHtml(
-        value
-    ) {
-        return String(
-            value ?? ""
-        )
-            .replace(
-                /&/g,
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll(
+                "&",
                 "&amp;"
             )
-            .replace(
-                /</g,
+            .replaceAll(
+                "<",
                 "&lt;"
             )
-            .replace(
-                />/g,
+            .replaceAll(
+                ">",
                 "&gt;"
             )
-            .replace(
-                /"/g,
+            .replaceAll(
+                '"',
                 "&quot;"
             )
-            .replace(
-                /'/g,
+            .replaceAll(
+                "'",
                 "&#039;"
             );
     }
 
-    static clearRadarMarkers() {
-        for (
-            const marker of this.radarMarkers
-        ) {
-            if (this.map) {
-                this.map.removeLayer(
-                    marker
-                );
-            }
-        }
+    /*
+     * ============================================================
+     * REFRESH RADARES
+     * ============================================================
+     */
 
-        this.radarMarkers = [];
-    }
-
-    static checkRadars(
-        latitude,
-        longitude,
-        heading
-    ) {
+    function startRadarRefresh() {
         if (
-            !this.allRadars.length
+            state.radarRefreshTimer
         ) {
-            return;
-        }
-
-        if (this.route) {
-            this.checkRouteRadars(
-                latitude,
-                longitude
-            );
-
-            return;
-        }
-
-        for (
-            const radar of this.allRadars
-        ) {
-            const distance =
-                this.distanceMeters(
-                    latitude,
-                    longitude,
-                    radar.latitude,
-                    radar.longitude
-                );
-
-            if (
-                distance >
-                this.warningDistance
-            ) {
-                continue;
-            }
-
-            if (
-                this.warnedRadars.has(
-                    radar.id
-                )
-            ) {
-                continue;
-            }
-
-            this.warnedRadars.add(
-                radar.id
-            );
-
-            this.warnRadar(
-                radar,
-                distance
+            clearInterval(
+                state.radarRefreshTimer
             );
         }
 
-        this.cleanupWarnings(
-            latitude,
-            longitude
-        );
-    }
-
-    static warnRadar(
-        radar,
-        distance
-    ) {
-        const roundedDistance =
-            Math.max(
-                1,
-                Math.round(distance)
-            );
-
-        const speed =
-            this.extractSpeed(
-                radar
-            );
-
-        let message =
-            `Radar reportado a ${roundedDistance} metros`;
-
-        if (speed) {
-            message +=
-                `, ${speed} kilómetros por hora`;
-        }
-
-        this.showStatus(
-            "⚠️ " + message
-        );
-
-        this.showRadarWarning(
-            roundedDistance,
-            speed
-        );
-
-        this.speak(
-            message
-        );
-
-        this.flashRadar(
-            radar
-        );
-    }
-
-    static extractSpeed(
-        radar
-    ) {
-        const raw =
-            radar.tags?.maxspeed ||
-            radar.tags?.velocidad ||
-            radar.tags?.["velocidad maxima"] ||
-            "";
-
-        const match =
-            String(raw).match(
-                /\d+(?:[.,]\d+)?/
-            );
-
-        if (!match) {
-            return "";
-        }
-
-        return String(
-            Number(
-                match[0].replace(
-                    ",",
-                    "."
-                )
-            )
-        );
-    }
-
-    static showRadarWarning(
-        distance,
-        speed
-    ) {
-        const warning =
-            document.getElementById(
-                "radarWarning"
-            );
-
-        const distanceElement =
-            document.getElementById(
-                "radarWarningDistance"
-            );
-
-        const limitElement =
-            document.getElementById(
-                "radarWarningLimit"
-            );
-
-        if (!warning) {
-            return;
-        }
-
-        if (distanceElement) {
-            distanceElement.textContent =
-                `${distance} M`;
-        }
-
-        if (limitElement) {
-            limitElement.textContent =
-                speed
-                    ? `LÍMITE ${speed} KM/H`
-                    : "MANTENGA ATENCIÓN";
-        }
-
-        warning.classList.add(
-            "active"
-        );
-
-        clearTimeout(
-            this.warningTimeout
-        );
-
-        this.warningTimeout =
-            setTimeout(
+        state.radarRefreshTimer =
+            setInterval(
                 () => {
-                    warning.classList.remove(
-                        "active"
+                    const position =
+                        getCurrentPositionForRoute();
+
+                    if (!position) {
+                        return;
+                    }
+
+                    loadRadars(
+                        position.latitude,
+                        position.longitude
                     );
                 },
-                5000
+                CONFIG.radar.refreshInterval
             );
     }
 
-    static speak(
-        message
-    ) {
+    /*
+     * ============================================================
+     * INIT
+     * ============================================================
+     */
+
+    function initialize() {
         if (
-            !("speechSynthesis" in window)
+            state.initialized
         ) {
             return;
         }
 
-        const speakNow = () => {
-            window.speechSynthesis.cancel();
+        state.initialized =
+            true;
 
-            const utterance =
-                new SpeechSynthesisUtterance(
-                    message
-                );
+        const mapReady =
+            initializeMap();
 
-            utterance.lang =
-                "es-ES";
-
-            utterance.rate =
-                1;
-
-            utterance.pitch =
-                0.9;
-
-            utterance.volume =
-                1;
-
-            const voices =
-                window.speechSynthesis
-                    .getVoices();
-
-            const spanishVoice =
-                voices.find(
-                    voice =>
-                        voice.lang &&
-                        voice.lang
-                            .toLowerCase()
-                            .startsWith("es")
-                );
-
-            if (spanishVoice) {
-                utterance.voice =
-                    spanishVoice;
-            }
-
-            window.speechSynthesis.speak(
-                utterance
-            );
-        };
-
-        const voices =
-            window.speechSynthesis
-                .getVoices();
-
-        if (voices.length) {
-            speakNow();
-        } else {
-            setTimeout(
-                speakNow,
-                150
-            );
-        }
-    }
-
-    static flashRadar(
-        radar
-    ) {
-        const marker =
-            this.radarMarkers.find(
-                item => {
-                    const position =
-                        item.getLatLng();
-
-                    return (
-                        Math.abs(
-                            position.lat -
-                            radar.latitude
-                        ) <
-                        0.00001 &&
-                        Math.abs(
-                            position.lng -
-                            radar.longitude
-                        ) <
-                        0.00001
-                    );
-                }
-            );
-
-        if (!marker) {
+        if (!mapReady) {
             return;
         }
 
-        const element =
-            marker.getElement();
+        updateGpsUI(false);
 
-        if (!element) {
-            return;
-        }
+        updateRadarCountUI();
 
-        element.style.filter =
-            "drop-shadow(0 0 14px red)";
+        showStatus(
+            "RADAR ONLINE · ESPERANDO GPS"
+        );
 
-        setTimeout(
+        /*
+         * Pedimos ubicación automáticamente.
+         * El navegador solicitará permiso.
+         */
+        requestLocation();
+
+        /*
+         * Carga inicial sobre Montevideo.
+         * Esto permite mostrar radares incluso
+         * antes de que el usuario conceda GPS.
+         */
+        loadRadars(
+            CONFIG.map.defaultCenter[0],
+            CONFIG.map.defaultCenter[1]
+        );
+
+        startRadarRefresh();
+
+        window.setTimeout(
             () => {
-                if (element) {
-                    element.style.filter =
-                        "";
+                if (state.map) {
+                    state.map.invalidateSize();
                 }
             },
-            3000
+            300
+        );
+
+        window.setTimeout(
+            () => {
+                if (state.map) {
+                    state.map.invalidateSize();
+                }
+            },
+            1000
         );
     }
 
-    static cleanupWarnings(
-        latitude,
-        longitude
-    ) {
-        for (
-            const id of this.warnedRadars
-        ) {
-            const radar =
-                this.allRadars.find(
-                    item =>
-                        item.id === id
-                );
+    /*
+     * ============================================================
+     * API PÚBLICA
+     * ============================================================
+     */
 
-            if (!radar) {
-                this.warnedRadars.delete(
-                    id
-                );
+    window.TrafficMap = {
 
-                continue;
+        get map() {
+            return state.map;
+        },
+
+        get radarCount() {
+            return state.radarCount;
+        },
+
+        get radars() {
+            return state.radars;
+        },
+
+        get simulation() {
+            return state.simulation;
+        },
+
+        get destination() {
+            return state.destination;
+        },
+
+        set destination(value) {
+            state.destination =
+                value;
+        },
+
+        get destinationLatitude() {
+            return state.destinationLatitude;
+        },
+
+        set destinationLatitude(value) {
+            state.destinationLatitude =
+                Number(value);
+        },
+
+        get destinationLongitude() {
+            return state.destinationLongitude;
+        },
+
+        set destinationLongitude(value) {
+            state.destinationLongitude =
+                Number(value);
+        },
+
+        get route() {
+            return state.route;
+        },
+
+        requestLocation,
+
+        startSimulation,
+
+        stopSimulation,
+
+        updateUserMarker,
+
+        calculateRouteToDestination,
+
+        distanceMeters,
+
+        destinationPoint,
+
+        checkRadars,
+
+        updateSimulationUI,
+
+        showStatus,
+
+        invalidateSize() {
+            if (state.map) {
+                state.map.invalidateSize();
             }
+        }
+    };
 
-            const distance =
-                this.distanceMeters(
-                    latitude,
-                    longitude,
-                    radar.latitude,
-                    radar.longitude
-                );
+    /*
+     * ============================================================
+     * ARRANQUE
+     * ============================================================
+     */
 
-            if (
-                distance > 500
-            ) {
-                this.warnedRadars.delete(
-                    id
-                );
+    if (
+        document.readyState ===
+        "loading"
+    ) {
+        document.addEventListener(
+            "DOMContentLoaded",
+            initialize,
+            {
+                once: true
             }
-        }
-    }
-
-    static updateNavigationInfo(
-        speed
-    ) {
-        if (
-            speed === null ||
-            speed === undefined ||
-            Number.isNaN(speed)
-        ) {
-            return;
-        }
-
-        this.showSpeed(
-            speed * 3.6
         );
+    } else {
+        initialize();
     }
 
-    static showSpeed(
-        kmh
-    ) {
-        let element =
-            document.getElementById(
-                "mapSpeed"
-            );
-
-        if (!element) {
-            element =
-                document.createElement(
-                    "div"
-                );
-
-            element.id =
-                "mapSpeed";
-
-            const mapContainer =
-                document.getElementById(
-                    "map"
-                );
-
-            if (mapContainer) {
-                mapContainer.appendChild(
-                    element
-                );
-            }
-        }
-
-        element.textContent =
-            `${Math.round(
-                kmh
-            )} KM/H`;
-    }
-
-    static showStatus(
-        message
-    ) {
-        const element =
-            document.getElementById(
-                "mapStatus"
-            );
-
-        if (element) {
-            element.textContent =
-                message;
-        }
-
-        console.log(
-            "[TrafficMap]",
-            message
-        );
-    }
-
-    static setSystemStatus(
-        status
-    ) {
-        const element =
-            document.getElementById(
-                "systemStatus"
-            );
-
-        if (element) {
-            element.textContent =
-                status;
-        }
-    }
-
-    static setGpsState(
-        state
-    ) {
-        const element =
-            document.getElementById(
-                "gpsState"
-            );
-
-        if (element) {
-            element.textContent =
-                state;
-        }
-    }
-
-    static updateRadarCount() {
-        const element =
-            document.getElementById(
-                "radarCount"
-            );
-
-        if (element) {
-            element.textContent =
-                String(
-                    this.allRadars.length
-                ).padStart(
-                    2,
-                    "0"
-                );
-        }
-    }
-
-    static destinationPoint(
-        latitude,
-        longitude,
-        bearing,
-        distance
-    ) {
-        const earthRadius =
-            6371000;
-
-        const toRadians =
-            degrees =>
-                degrees *
-                Math.PI /
-                180;
-
-        const toDegrees =
-            radians =>
-                radians *
-                180 /
-                Math.PI;
-
-        const angularDistance =
-            distance /
-            earthRadius;
-
-        const bearingRad =
-            toRadians(
-                bearing
-            );
-
-        const latitudeRad =
-            toRadians(
-                latitude
-            );
-
-        const longitudeRad =
-            toRadians(
-                longitude
-            );
-
-        const newLatitude =
-            Math.asin(
-                Math.sin(
-                    latitudeRad
-                ) *
-                Math.cos(
-                    angularDistance
-                ) +
-                Math.cos(
-                    latitudeRad
-                ) *
-                Math.sin(
-                    angularDistance
-                ) *
-                Math.cos(
-                    bearingRad
-                )
-            );
-
-        const newLongitude =
-            longitudeRad +
-            Math.atan2(
-                Math.sin(
-                    bearingRad
-                ) *
-                Math.sin(
-                    angularDistance
-                ) *
-                Math.cos(
-                    latitudeRad
-                ),
-                Math.cos(
-                    angularDistance
-                ) -
-                Math.sin(
-                    latitudeRad
-                ) *
-                Math.sin(
-                    newLatitude
-                )
-            );
-
-        return {
-            latitude:
-                toDegrees(
-                    newLatitude
-                ),
-
-            longitude:
-                toDegrees(
-                    newLongitude
-                )
-        };
-    }
-
-    static distanceMeters(
-        lat1,
-        lon1,
-        lat2,
-        lon2
-    ) {
-        const earthRadius =
-            6371000;
-
-        const toRadians =
-            degrees =>
-                degrees *
-                Math.PI /
-                180;
-
-        const dLat =
-            toRadians(
-                lat2 -
-                lat1
-            );
-
-        const dLon =
-            toRadians(
-                lon2 -
-                lon1
-            );
-
-        const a =
-            Math.sin(
-                dLat / 2
-            ) ** 2 +
-            Math.cos(
-                toRadians(
-                    lat1
-                )
-            ) *
-            Math.cos(
-                toRadians(
-                    lat2
-                )
-            ) *
-            Math.sin(
-                dLon / 2
-            ) ** 2;
-
-        const c =
-            2 *
-            Math.atan2(
-                Math.sqrt(a),
-                Math.sqrt(
-                    1 - a
-                )
-            );
-
-        return (
-            earthRadius *
-            c
-        );
-    }
-
-    static calculateBearing(
-        lat1,
-        lon1,
-        lat2,
-        lon2
-    ) {
-        const toRadians =
-            degrees =>
-                degrees *
-                Math.PI /
-                180;
-
-        const toDegrees =
-            radians =>
-                radians *
-                180 /
-                Math.PI;
-
-        const phi1 =
-            toRadians(
-                lat1
-            );
-
-        const phi2 =
-            toRadians(
-                lat2
-            );
-
-        const deltaLambda =
-            toRadians(
-                lon2 -
-                lon1
-            );
-
-        const y =
-            Math.sin(
-                deltaLambda
-            ) *
-            Math.cos(
-                phi2
-            );
-
-        const x =
-            Math.cos(
-                phi1
-            ) *
-            Math.sin(
-                phi2
-            ) -
-            Math.sin(
-                phi1
-            ) *
-            Math.cos(
-                phi2
-            ) *
-            Math.cos(
-                deltaLambda
-            );
-
-        return (
-            (
-                toDegrees(
-                    Math.atan2(
-                        y,
-                        x
-                    )
-                ) +
-                360
-            ) % 360
-        );
-    }
-
-    static destroy() {
-        this.stopContinuousTestMovement();
-        this.stopRealTracking();
-
-        if (
-            this.testKeyHandler
-        ) {
-            document.removeEventListener(
-                "keydown",
-                this.testKeyHandler
-            );
-
-            this.testKeyHandler =
-                null;
-        }
-
-        if (
-            this.testMapClickHandler &&
-            this.map
-        ) {
-            this.map.off(
-                "click",
-                this.testMapClickHandler
-            );
-
-            this.testMapClickHandler =
-                null;
-        }
-
-        if (
-            "speechSynthesis" in window
-        ) {
-            window.speechSynthesis.cancel();
-        }
-
-        this.clearRadarMarkers();
-        this.clearRouteLayer();
-
-        if (this.map) {
-            this.map.remove();
-            this.map = null;
-        }
-
-        this.initialized =
-            false;
-
-        this.allRadars = [];
-        this.radars = [];
-        this.loadedRadarZones = [];
-        this.lastRadarZoneLoadPosition =
-            null;
-        this.lastPosition =
-            null;
-        this.previousPosition =
-            null;
-
-        this.route = null;
-        this.routeRadars = [];
-        this.routeProgress = 0;
-        this.routeLastPosition =
-            null;
-
-        this.warnedRadars.clear();
-
-        this.testMode = {
-            active: false,
-            latitude: null,
-            longitude: null,
-            heading: 0,
-            speed: 40,
-            moveInterval: null,
-            stepMeters: 10,
-            movementTimer: null,
-            manualCamera: true
-        };
-    }
-}
-
-document.addEventListener(
-    "DOMContentLoaded",
-    () => {
-        TrafficMap.init();
-    }
-);
+})();
